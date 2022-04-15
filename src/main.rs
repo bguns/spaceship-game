@@ -3,7 +3,7 @@ use crossterm::{
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand, Result,
 };
-use std::io::{stdout, Write};
+use std::io::stdout;
 
 fn main() -> Result<()> {
     let mut stdout = stdout();
