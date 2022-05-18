@@ -28,7 +28,7 @@ fn main() -> Result<()> {
         if (keys.contains(&Keycode::LControl) || keys.contains(&Keycode::RControl))
             && keys.contains(&Keycode::Q)
         {
-            // We use device_query to get keyboard state, but this does not drain the terminal stdin input.
+            // We use device_query to get keyboard state, but this does not actually read the terminal stdin input.
             // If we don't "drain" the input, all the keys the user presses while running this, will appear
             // on the command line after exiting the application.
             while event::poll(one_ms)? {
