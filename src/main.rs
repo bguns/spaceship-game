@@ -45,11 +45,14 @@ fn main() -> Result<()> {
             now.elapsed().as_micros()
         )))?;
         stdout.queue(cursor::RestorePosition)?;
+        stdout.queue(style::Print('.'))?;
 
         stdout.flush()?;
 
-        stdout.execute(style::Print('.'))?;
-        thread::sleep(fifteen_millis - now.elapsed());
+        let elapsed = now.elapsed();
+        if elapsed < fifteen_millis {
+            thread::sleep(fifteen_millis - elapsed);
+        }
     }
 
     terminal::disable_raw_mode()?;
