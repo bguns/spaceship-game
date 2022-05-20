@@ -1,6 +1,6 @@
 use crossterm::{
     cursor, event, style,
-    terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand, QueueableCommand, Result,
 };
 
@@ -14,6 +14,7 @@ fn main() -> Result<()> {
     let mut stdout = stdout();
     stdout.execute(EnterAlternateScreen)?;
     terminal::enable_raw_mode()?;
+    stdout.execute(Clear(ClearType::All))?;
     stdout.execute(cursor::MoveToRow(2))?;
 
     let one_ms = Duration::from_millis(1);
@@ -44,11 +45,12 @@ fn main() -> Result<()> {
         stdout.queue(cursor::SavePosition)?;
         stdout.queue(cursor::MoveToColumn(1))?;
         stdout.queue(cursor::MoveToRow(1))?;
+        stdout.queue(Clear(ClearType::CurrentLine))?;
         stdout.queue(style::Print(&format!(
-            "Frame {} processed in {} microseconds. {}",
+            "Frame {} processed in {} microseconds{}",
             frame_number,
             now.elapsed().as_micros(),
-            ".".repeat((frame_number % 15) as usize)
+            ".".repeat((frame_number % 60) as usize)
         )))?;
         stdout.queue(cursor::RestorePosition)?;
 
@@ -132,7 +134,7 @@ impl KeyState {
 
 struct KeyboardState {
     device_state: DeviceState,
-    character_keys: [(char, KeyState); 36],
+    character_keys: [(char, KeyState); 38],
     shift: KeyState,
     control: KeyState,
     alt: KeyState,
@@ -179,6 +181,8 @@ impl KeyboardState {
                 ('x', KeyState::new(Keycode::X)),
                 ('y', KeyState::new(Keycode::Y)),
                 ('z', KeyState::new(Keycode::Z)),
+                ('[', KeyState::new(Keycode::LeftBracket)),
+                (']', KeyState::new(Keycode::RightBracket)),
             ],
             shift: KeyState::new(Keycode::LShift),
             control: KeyState::new(Keycode::LControl),
