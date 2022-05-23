@@ -2,8 +2,9 @@ mod error;
 mod input;
 
 use crossterm::{
-    cursor, event, style,
-    terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
+    cursor, event,
+    style::{self, Stylize},
+    terminal::{self, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand, QueueableCommand,
 };
 
@@ -21,7 +22,7 @@ fn main() -> Result<()> {
     stdout.execute(EnterAlternateScreen)?;
     terminal::enable_raw_mode()?;
     stdout.execute(Clear(ClearType::All))?;
-    stdout.execute(cursor::MoveToRow(2))?;
+    stdout.execute(cursor::MoveToRow(3))?;
 
     let one_ms = Duration::from_millis(1);
     let fifteen_millis = Duration::from_millis(15);
@@ -58,6 +59,19 @@ fn main() -> Result<()> {
             now.elapsed().as_micros(),
             ".".repeat((frame_number % 60) as usize)
         )))?;
+        stdout.queue(cursor::MoveToRow(2))?;
+        stdout.queue(cursor::MoveToColumn(1))?;
+        stdout.queue(Clear(ClearType::CurrentLine))?;
+        let (columns, rows) = size()?;
+        stdout.queue(style::Print(&format!(
+            "Terminal width x height: {} x {}. Desired dimensions: ",
+            columns, rows
+        )))?;
+        if columns < 200 || rows < 50 {
+            stdout.queue(style::PrintStyledContent("200 x 50".red()))?;
+        } else {
+            stdout.queue(style::PrintStyledContent("200 x 50".green()))?;
+        }
         stdout.queue(cursor::RestorePosition)?;
 
         for c in keyboard_state.get_pressed_characters() {
