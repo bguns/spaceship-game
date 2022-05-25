@@ -1,92 +1,64 @@
 mod error;
 mod input;
-
-use crossterm::{
-    cursor, event,
-    style::{self, Stylize},
-    terminal::{self, size, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand, QueueableCommand,
-};
+mod term_render;
 
 use device_query::{DeviceState, Keycode};
 
-use std::io::{stdout, Write};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::error::Result;
 use crate::input::KeyboardState;
+use crate::term_render::Renderer;
+
+pub struct GameState {
+    frame_number: u64,
+    now: Instant,
+    keyboard_state: KeyboardState,
+    should_quit: bool,
+}
+
+impl GameState {
+    pub fn update(&mut self) -> Result<()> {
+        self.now = Instant::now();
+        self.frame_number += 1;
+        self.keyboard_state.update(self.frame_number);
+        self.should_quit = self
+            .keyboard_state
+            .get_key_state(Keycode::LControl)
+            .is_down()
+            && self.keyboard_state.get_key_state(Keycode::Q).is_down();
+        Ok(())
+    }
+}
 
 fn main() -> Result<()> {
-    let mut stdout = stdout();
-    stdout.execute(EnterAlternateScreen)?;
-    terminal::enable_raw_mode()?;
-    stdout.execute(Clear(ClearType::All))?;
-    stdout.execute(cursor::MoveToRow(3))?;
+    let mut renderer = Renderer::init()?;
+    let device_state = DeviceState::new();
+    let keyboard_state = KeyboardState::new(device_state);
+    let mut game_state = GameState {
+        frame_number: 0,
+        now: Instant::now(),
+        keyboard_state,
+        should_quit: false,
+    };
 
-    let one_ms = Duration::from_millis(1);
     let fifteen_millis = Duration::from_millis(15);
 
-    let device_state = DeviceState::new();
-    let mut keyboard_state = KeyboardState::new(device_state);
-
-    let mut frame_number: u64 = 0;
-
     loop {
-        let now = Instant::now();
-        frame_number += 1;
+        game_state.update()?;
 
-        keyboard_state.update(frame_number);
-        if keyboard_state.get_key_state(Keycode::LControl).is_down()
-            && keyboard_state.get_key_state(Keycode::Q).is_down()
-        {
-            // We use device_query to get keyboard state, but this does not actually read the terminal stdin input.
-            // If we don't "drain" the input, all the keys the user presses while running this, will appear
-            // on the command line after exiting the application.
-            while event::poll(one_ms)? {
-                let _ = event::read()?;
-            }
+        if game_state.should_quit {
             break;
         }
 
-        stdout.queue(cursor::SavePosition)?;
-        stdout.queue(cursor::MoveToColumn(1))?;
-        stdout.queue(cursor::MoveToRow(1))?;
-        stdout.queue(Clear(ClearType::CurrentLine))?;
-        stdout.queue(style::Print(&format!(
-            "Frame {} processed in {} microseconds{}",
-            frame_number,
-            now.elapsed().as_micros(),
-            ".".repeat((frame_number % 60) as usize)
-        )))?;
-        stdout.queue(cursor::MoveToRow(2))?;
-        stdout.queue(cursor::MoveToColumn(1))?;
-        stdout.queue(Clear(ClearType::CurrentLine))?;
-        let (columns, rows) = size()?;
-        stdout.queue(style::Print(&format!(
-            "Terminal width x height: {} x {}. Desired dimensions: ",
-            columns, rows
-        )))?;
-        if columns < 200 || rows < 50 {
-            stdout.queue(style::PrintStyledContent("200 x 50".red()))?;
-        } else {
-            stdout.queue(style::PrintStyledContent("200 x 50".green()))?;
-        }
-        stdout.queue(cursor::RestorePosition)?;
+        renderer.render_frame(&game_state)?;
 
-        for c in keyboard_state.get_pressed_characters() {
-            stdout.queue(style::Print(c))?;
-        }
-
-        stdout.flush()?;
-
-        let elapsed = now.elapsed();
+        let elapsed = game_state.now.elapsed();
         if elapsed < fifteen_millis {
             thread::sleep(fifteen_millis - elapsed);
         }
     }
 
-    terminal::disable_raw_mode()?;
-    stdout.execute(LeaveAlternateScreen)?;
     Ok(())
 }
