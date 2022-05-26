@@ -1,7 +1,10 @@
 mod error;
+mod gfx;
 mod input;
 
 use device_query::{DeviceState, Keycode};
+
+use pollster::FutureExt as _;
 
 use winit::{
     dpi::LogicalSize,
@@ -13,6 +16,7 @@ use winit::{
 use std::time::{Duration, Instant};
 
 use crate::error::Result;
+use crate::gfx::GfxState;
 use crate::input::KeyboardState;
 
 pub struct GameState {
@@ -43,8 +47,10 @@ impl GameState {
 
 #[allow(unreachable_code)]
 fn main() -> Result<()> {
+    env_logger::init();
     let device_state = DeviceState::new();
     let keyboard_state = KeyboardState::new(device_state);
+
     let now = Instant::now();
     let mut game_state = GameState {
         start_time: now,
@@ -59,12 +65,14 @@ fn main() -> Result<()> {
     let sixteen_millis = Duration::from_millis(16);
 
     let event_loop = EventLoop::new();
-    let _window = WindowBuilder::new()
+    let window = WindowBuilder::new()
         .with_title("Game")
         .with_inner_size(LogicalSize::new(1920.0, 1080.0))
         //.with_decorations(false)
         .build(&event_loop)
         .unwrap();
+
+    let _gfx_state = async { GfxState::new(&window).await }.block_on();
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
