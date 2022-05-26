@@ -20,16 +20,17 @@ impl Renderer {
         let mut stdout = stdout();
         stdout.execute(EnterAlternateScreen)?;
         terminal::enable_raw_mode()?;
-        stdout.execute(Clear(ClearType::All))?;
+        stdout.execute(Clear(ClearType::Purge))?;
+        stdout.execute(cursor::Hide)?;
         stdout.execute(cursor::MoveToRow(3))?;
 
         Ok(Self { stdout })
     }
 
     pub fn render_frame(&mut self, game_state: &GameState) -> Result<()> {
+        self.clear_screen()?;
         self.stdout.queue(cursor::MoveToColumn(1))?;
         self.stdout.queue(cursor::MoveToRow(1))?;
-        self.stdout.queue(Clear(ClearType::All))?;
         self.stdout.queue(style::Print(&format!(
             "Frame {} processed in {} microseconds{}",
             game_state.frame_number,
@@ -44,7 +45,6 @@ impl Renderer {
             self.stdout.queue(cursor::SavePosition)?;
             self.stdout.queue(cursor::MoveToRow(2))?;
             self.stdout.queue(cursor::MoveToColumn(1))?;
-            self.stdout.queue(Clear(ClearType::CurrentLine))?;
             self.stdout.queue(style::Print(&format!(
                 "Terminal width x height: {} x {}.",
                 columns, rows
@@ -57,6 +57,21 @@ impl Renderer {
         }
 
         self.stdout.flush()?;
+        Ok(())
+    }
+
+    fn clear_screen(&mut self) -> Result<()> {
+        self.stdout.queue(Clear(ClearType::All))?;
+        //self.stdout.queue(Clear(ClearType::Purge))?;
+        /*self.stdout.queue(cursor::SavePosition)?;
+        let (cols, rows) = size()?;
+        for y in 1..rows + 1 {
+            self.stdout.queue(cursor::MoveToRow(y))?;
+            self.stdout.queue(cursor::MoveToColumn(1))?;
+            self.stdout.queue(style::Print(" ".repeat(cols as usize)))?;
+        }
+        self.stdout.queue(cursor::RestorePosition)?;
+        self.stdout.flush()?;*/
         Ok(())
     }
 
@@ -100,6 +115,9 @@ impl Drop for Renderer {
         while event::poll(Duration::from_millis(1)).unwrap_or(false) {
             let _ = event::read().expect("Unexpected crossterm error: event::read() returned Err after succesful event::poll.");
         }
+        self.stdout
+            .execute(cursor::Show)
+            .expect("Unexpected crossterm error: failed to re-enable cursor upon exit.");
         terminal::disable_raw_mode()
             .expect("Unexpected crossterm error: failed to disable raw mode on exit.");
         self.stdout

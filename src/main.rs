@@ -1,15 +1,18 @@
 mod error;
 mod input;
-mod term_render;
 
 use device_query::{DeviceState, Keycode};
 
-use std::thread;
+use winit::{
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    window::WindowBuilder,
+};
+
 use std::time::{Duration, Instant};
 
 use crate::error::Result;
 use crate::input::KeyboardState;
-use crate::term_render::Renderer;
 
 pub struct GameState {
     frame_number: u64,
@@ -32,8 +35,8 @@ impl GameState {
     }
 }
 
+#[allow(unreachable_code)]
 fn main() -> Result<()> {
-    let mut renderer = Renderer::init()?;
     let device_state = DeviceState::new();
     let keyboard_state = KeyboardState::new(device_state);
     let mut game_state = GameState {
@@ -43,22 +46,43 @@ fn main() -> Result<()> {
         should_quit: false,
     };
 
-    let fifteen_millis = Duration::from_millis(15);
+    let sixteen_millis = Duration::from_millis(16);
 
-    loop {
-        game_state.update()?;
+    let event_loop = EventLoop::new();
+    let window = WindowBuilder::new().build(&event_loop).unwrap();
 
-        if game_state.should_quit {
-            break;
+    event_loop.run(move |event, _, control_flow| match event {
+        Event::WindowEvent {
+            event: WindowEvent::CloseRequested,
+            ..
+        } => {
+            println!("The close button was pressed; stopping");
+            *control_flow = ControlFlow::Exit
         }
+        Event::MainEventsCleared => {
+            let previous_frame_start = game_state.now.clone();
+            game_state.update().unwrap();
 
-        renderer.render_frame(&game_state)?;
+            let elapsed = game_state.now.elapsed();
+            let max_fps = 1_000_000.0 / elapsed.as_micros() as f64;
+            let fps = 1_000_000.0 / (game_state.now - previous_frame_start).as_micros() as f64;
+            print!(
+                "\rFrame number: {}; FPS: {:.2}; Max FPS: {:.2}",
+                game_state.frame_number, fps, max_fps
+            );
+            if elapsed < sixteen_millis {
+                *control_flow = ControlFlow::WaitUntil(game_state.now + sixteen_millis - elapsed);
+            } else {
+                *control_flow = ControlFlow::Poll;
+            }
 
-        let elapsed = game_state.now.elapsed();
-        if elapsed < fifteen_millis {
-            thread::sleep(fifteen_millis - elapsed);
+            if game_state.should_quit {
+                println!("Should quit");
+                *control_flow = ControlFlow::Exit;
+            }
         }
-    }
+        _ => {}
+    });
 
     Ok(())
 }
