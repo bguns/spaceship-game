@@ -48,7 +48,7 @@ fn main() -> Result<()> {
     let now = Instant::now();
     let mut game_state = GameState {
         start_time: now,
-        now: now,
+        now,
         delta_time: Duration::from_millis(0),
         run_time: Duration::from_millis(0),
         frame_number: 0,
@@ -59,7 +59,7 @@ fn main() -> Result<()> {
     let sixteen_millis = Duration::from_millis(16);
 
     let event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
+    let _window = WindowBuilder::new()
         .with_title("Game")
         .with_inner_size(LogicalSize::new(1920.0, 1080.0))
         //.with_decorations(false)

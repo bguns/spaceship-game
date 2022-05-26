@@ -77,7 +77,7 @@ impl KeyboardState {
         }
     }
 
-    pub fn get_pressed_characters(&self) -> Vec<char> {
+    pub fn _get_pressed_characters(&self) -> Vec<char> {
         return vec![];
         /*let intermediate_iter = self
             .character_keys
@@ -143,7 +143,7 @@ impl KeyState {
         self.down
     }
 
-    pub fn is_pressed(&self) -> bool {
+    pub fn _is_pressed(&self) -> bool {
         self.pressed
     }
 
