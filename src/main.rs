@@ -72,15 +72,28 @@ fn main() -> Result<()> {
         .build(&event_loop)
         .unwrap();
 
-    let _gfx_state = async { GfxState::new(&window).await }.block_on();
+    let mut gfx_state = async { GfxState::new(&window).await }.block_on();
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
-            event: WindowEvent::CloseRequested,
-            ..
-        } => {
-            println!("The close button was pressed; stopping");
-            *control_flow = ControlFlow::Exit
+            ref event,
+            window_id,
+        } if window_id == window.id() => {
+            if !gfx_state.input(event) {
+                match event {
+                    WindowEvent::CloseRequested => {
+                        println!("The close button was pressed; stopping");
+                        *control_flow = ControlFlow::Exit
+                    }
+                    WindowEvent::Resized(physical_size) => {
+                        gfx_state.resize(*physical_size);
+                    }
+                    WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                        gfx_state.resize(**new_inner_size);
+                    }
+                    _ => {}
+                }
+            }
         }
         Event::MainEventsCleared => {
             let now = Instant::now();
@@ -89,7 +102,15 @@ fn main() -> Result<()> {
                 *control_flow = ControlFlow::WaitUntil(previous_frame_start + sixteen_millis)
             } else {
                 game_state.update(now).unwrap();
-                // RENDER HERE
+                match gfx_state.render() {
+                    Ok(_) => {}
+                    // Reconfigure the surface if lost
+                    Err(wgpu::SurfaceError::Lost) => gfx_state.resize(gfx_state.size),
+                    // The system is out of memory, we should probably quit
+                    Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
+                    // All other errors (Outdated, Timeout) should be resolved by the next frame
+                    Err(e) => eprintln!("{:?}", e),
+                }
 
                 let elapsed = now.elapsed();
                 let max_fps = 1_000_000.0 / elapsed.as_micros() as f64;
