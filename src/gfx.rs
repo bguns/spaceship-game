@@ -7,6 +7,7 @@ pub struct GfxState {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     pub size: winit::dpi::PhysicalSize<u32>,
+    render_pipeline: wgpu::RenderPipeline,
 }
 
 impl GfxState {
@@ -59,12 +60,65 @@ impl GfxState {
 
         surface.configure(&device, &config);
 
+        let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: Some("Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Render Pipeline Layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                // What type of vertices we want to pass to the vertex shader.
+                // We're specifying the vertices in the vertex shader itself, so we'll leave this empty.
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        });
+
         Self {
             surface,
             device,
             queue,
             config,
             size,
+            render_pipeline,
         }
     }
 
@@ -100,28 +154,36 @@ impl GfxState {
         // begin_render_pass borrows encoder mutably, so we need to make sure that the borrow
         // is dropped before we can call encoder.finish()
         {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
-                color_attachments: &[wgpu::RenderPassColorAttachment {
-                    // The view to save the colors to. In this case, the screen.
-                    view: &view,
-                    // Target that will receive the resolved output. Is the same as `view` unless multisampling is enabled.
-                    resolve_target: None,
-                    // What to do with the colors on the view (i.e. the screen)
-                    ops: wgpu::Operations {
-                        // Load tells wgpu how to handle colors stored from the previous frame (we clear the screen)
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1,
-                            g: 0.2,
-                            b: 0.3,
-                            a: 1.0,
-                        }),
-                        // We want to store the rendered results to the (Surface)Texture behind the TextureView (the view)
-                        store: true,
+                color_attachments: &[
+                    // This is what [[location(0)]] in the fragment shader targets
+                    wgpu::RenderPassColorAttachment {
+                        // The view to save the colors to. In this case, the screen.
+                        view: &view,
+                        // Target that will receive the resolved output. Is the same as `view` unless multisampling is enabled.
+                        resolve_target: None,
+                        // What to do with the colors on the view (i.e. the screen)
+                        ops: wgpu::Operations {
+                            // Load tells wgpu how to handle colors stored from the previous frame (we clear the screen)
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.1,
+                                g: 0.2,
+                                b: 0.3,
+                                a: 1.0,
+                            }),
+                            // We want to store the rendered results to the (Surface)Texture behind the TextureView (the view)
+                            store: true,
+                        },
                     },
-                }],
+                ],
                 depth_stencil_attachment: None,
             });
+
+            render_pass.set_pipeline(&self.render_pipeline);
+            // Draw three vertices and one instance.
+            // This is where [[builtin(vertex_index)]] in the shader gets its data from.
+            render_pass.draw(0..6, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
