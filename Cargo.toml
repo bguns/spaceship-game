@@ -15,3 +15,4 @@ wgpu = "0.12"
 pollster = "0.2.5"
 bytemuck = { version = "1.9.1", features = ["derive"] }
 image = "0.24.2"
+cgmath = "0.18.0"

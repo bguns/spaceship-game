@@ -102,6 +102,7 @@ fn main() -> Result<()> {
                 *control_flow = ControlFlow::WaitUntil(previous_frame_start + sixteen_millis)
             } else {
                 game_state.update(now).unwrap();
+                gfx_state.update();
                 match gfx_state.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if lost
