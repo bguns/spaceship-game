@@ -86,6 +86,49 @@ impl Texture {
             sampler,
         })
     }
+
+    pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+    pub fn create_depth_texture(
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        label: &str,
+    ) -> Self {
+        let size = wgpu::Extent3d {
+            width: config.width,
+            height: config.height,
+            depth_or_array_layers: 1,
+        };
+        let desc = wgpu::TextureDescriptor {
+            label: Some(label),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        };
+        let texture = device.create_texture(&desc);
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            lod_min_clamp: -100.0,
+            lod_max_clamp: 100.0,
+            ..Default::default()
+        });
+
+        Self {
+            texture,
+            view,
+            sampler,
+        }
+    }
 }
 
 #[repr(C)]
@@ -355,6 +398,7 @@ pub struct GfxState {
     diffuse_texture: Texture,
     instances: Vec<Instance>,
     instance_buffer: wgpu::Buffer,
+    depth_texture: Texture,
     camera: Camera,
     camera_controller: CameraController,
     camera_uniform: CameraUniform,
@@ -488,6 +532,8 @@ impl GfxState {
             usage: wgpu::BufferUsages::VERTEX,
         });
 
+        let depth_texture = Texture::create_depth_texture(&device, &config, "depth_texture");
+
         let camera = Camera {
             // position the camera one unit up and 2 units back
             // +z is out of the screen
@@ -579,7 +625,13 @@ impl GfxState {
                 // Requires Features::CONSERVATIVE_RASTERIZATION
                 conservative: false,
             },
-            depth_stencil: None,
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: Texture::DEPTH_FORMAT,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
@@ -616,6 +668,7 @@ impl GfxState {
             diffuse_texture,
             instances,
             instance_buffer,
+            depth_texture,
             camera,
             camera_controller,
             camera_uniform,
@@ -630,6 +683,8 @@ impl GfxState {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
+            self.depth_texture =
+                Texture::create_depth_texture(&self.device, &self.config, "depth_texture");
         }
     }
 
@@ -687,7 +742,14 @@ impl GfxState {
                         },
                     },
                 ],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_texture.view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: true,
+                    }),
+                    stencil_ops: None,
+                }),
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
