@@ -98,7 +98,7 @@ fn main() -> Result<()> {
                 *control_flow = ControlFlow::WaitUntil(previous_frame_start + sixteen_millis)
             } else {
                 game_state.update(now).unwrap();
-                match gfx_state.render(Some("Hello, World!")) {
+                match gfx_state.render(Some("ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")) {
                     Ok(_) => {}
                     // Reconfigure the surface if lost
                     Err(GameError::WgpuError(wgpu::SurfaceError::Lost)) => gfx_state.resize(None, None),
