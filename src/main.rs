@@ -4,8 +4,6 @@ mod input;
 
 use device_query::{DeviceState, Keycode};
 
-use pollster::FutureExt as _;
-
 use winit::{
     dpi::LogicalSize,
     event::{Event, WindowEvent},
@@ -15,7 +13,7 @@ use winit::{
 
 use std::time::{Duration, Instant};
 
-use crate::error::Result;
+use crate::error::{GameError, Result};
 use crate::gfx::GfxState;
 use crate::input::KeyboardState;
 
@@ -72,27 +70,25 @@ fn main() -> Result<()> {
         .build(&event_loop)
         .unwrap();
 
-    let mut gfx_state = async { GfxState::new(&window).await }.block_on();
+    let mut gfx_state = GfxState::new(&window);
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
             ref event,
             window_id,
         } if window_id == window.id() => {
-            if !gfx_state.input(event) {
-                match event {
-                    WindowEvent::CloseRequested => {
-                        println!("The close button was pressed; stopping");
-                        *control_flow = ControlFlow::Exit
-                    }
-                    WindowEvent::Resized(physical_size) => {
-                        gfx_state.resize(*physical_size);
-                    }
-                    WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                        gfx_state.resize(**new_inner_size);
-                    }
-                    _ => {}
+            match event {
+                WindowEvent::CloseRequested => {
+                    println!("The close button was pressed; stopping");
+                    *control_flow = ControlFlow::Exit
                 }
+                WindowEvent::Resized(physical_size) => {
+                    gfx_state.resize(Some(*physical_size));
+                }
+                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                    gfx_state.resize(Some(**new_inner_size));
+                }
+                _ => {}
             }
         }
         Event::MainEventsCleared => {
@@ -102,14 +98,12 @@ fn main() -> Result<()> {
                 *control_flow = ControlFlow::WaitUntil(previous_frame_start + sixteen_millis)
             } else {
                 game_state.update(now).unwrap();
-                gfx_state.update();
                 match gfx_state.render() {
                     Ok(_) => {}
                     // Reconfigure the surface if lost
-                    Err(wgpu::SurfaceError::Lost) => gfx_state.resize(gfx_state.size),
-                    // The system is out of memory, we should probably quit
-                    Err(wgpu::SurfaceError::OutOfMemory) => *control_flow = ControlFlow::Exit,
-                    // All other errors (Outdated, Timeout) should be resolved by the next frame
+                    Err(GameError::WgpuError(wgpu::SurfaceError::Lost)) => gfx_state.resize(None),
+                    // Out of graphics memory probably means we should quit.
+                    Err(GameError::WgpuError(wgpu::SurfaceError::OutOfMemory)) => *control_flow = ControlFlow::Exit,
                     Err(e) => eprintln!("{:?}", e),
                 }
 

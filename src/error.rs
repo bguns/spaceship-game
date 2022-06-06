@@ -6,7 +6,13 @@ pub type Result<T> = std::result::Result<T, GameError>;
 #[derive(Debug)]
 pub enum GameError {
     Error(String),
-    //CrosstermError(crossterm::ErrorKind),
+    WgpuError(wgpu::SurfaceError), //CrosstermError(crossterm::ErrorKind),
+}
+
+impl From<wgpu::SurfaceError> for GameError {
+    fn from(e: wgpu::SurfaceError) -> Self {
+        GameError::WgpuError(e)
+    }
 }
 
 /*impl From<crossterm::ErrorKind> for GameError {
@@ -21,6 +27,9 @@ impl fmt::Display for GameError {
         match &self {
             &GameError::Error(message) => {
                 write!(f, "{}", message)
+            }
+            &GameError::WgpuError(message) => {
+                write!(f, "Wgpu Error: {}", message)
             } /*&GameError::CrosstermError(crossterm_error) => {
                   write!(f, "Unexpected crossterm error: {}", crossterm_error)
               }*/
