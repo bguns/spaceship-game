@@ -3,64 +3,68 @@ use winit::window::Window;
 
 use crate::error::Result;
 
-use rusttype::gpu_cache::Cache;
-use rusttype::{Font, PositionedGlyph, Rect, Scale};
-
-fn layout_paragraph<'a>(
-    font: &Font<'a>,
-    scale: Scale,
-    width: u32,
-    text: &str,
-) -> Vec<PositionedGlyph<'a>> {
-    let mut result = Vec::new();
-    let v_metrics = font.v_metrics(scale);
-    let advance_height = v_metrics.ascent - v_metrics.descent + v_metrics.line_gap;
-    let mut caret = rusttype::point(0.0, v_metrics.ascent);
-    let mut last_glyph_id = None;
-    for c in text.chars() {
-        if c.is_control() {
-            match c {
-                '\r' => {
-                    caret = rusttype::point(0.0, caret.y + advance_height);
-                }
-                '\n' => {}
-                _ => {}
-            }
-            continue;
-        }
-        let base_glyph = font.glyph(c);
-        if let Some(id) = last_glyph_id.take() {
-            caret.x += font.pair_kerning(scale, id, base_glyph.id());
-        }
-        last_glyph_id = Some(base_glyph.id());
-        let mut glyph = base_glyph.scaled(scale).positioned(caret);
-        if let Some(bb) = glyph.pixel_bounding_box() {
-            if bb.max.x > width as i32 {
-                caret = rusttype::point(0.0, caret.y + advance_height);
-                glyph.set_position(caret);
-                last_glyph_id = None;
-            }
-        }
-        caret.x += glyph.unpositioned().h_metrics().advance_width;
-        result.push(glyph);
-    }
-    result
-}
+use ab_glyph::{Font, FontRef, Glyph};
 
 pub struct GlyphCacheTexture {
+    pub font_path: std::path::PathBuf,
+    pub px_scale: f32,
+    cached_chars: [char; 1],
+    cached_bounding_boxes: [cgmath::Matrix2<u32>; 1],
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
-    pub upload_buffer_size: u64,
 }
 
 impl GlyphCacheTexture {
-    const INITIAL_UPLOAD_BUFFER_SIZE: u64 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64 * 100;
+    //const INITIAL_UPLOAD_BUFFER_SIZE: u64 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64 * 100;
 
-    pub fn new(device: &wgpu::Device, label: Option<&str>, width: u32, height: u32) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        label: Option<&str>,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let px_scale = 128.0;
+        let font_path = std::path::PathBuf::from("../fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
+        let font_data = include_bytes!("../fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
+        let font = ab_glyph::FontRef::try_from_slice(font_data).expect("Unable to load font.");
+        let a_glyph: ab_glyph::Glyph = font
+            .glyph_id('a')
+            .with_scale_and_position(px_scale, ab_glyph::point(0.0, 0.0));
+
+        let cached_chars = ['a'];
+        let mut cached_bounding_boxes = [cgmath::Matrix2::<u32>::new(0, 0, 0, 0)];
+
+        let texture_row_size = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let texture_rows = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let mut texture_data: Vec<u8> = vec![0; (texture_row_size * texture_rows) as usize];
+
+        /*if let Some(a) = font.outline_glyph(a_glyph) {
+            let px_bounds = a.px_bounds();
+            cached_bounding_boxes[0] = cgmath::Matrix2::<u32>::new(
+                px_bounds.min.x as u32,
+                px_bounds.max.x as u32,
+                px_bounds.min.y as u32,
+                px_bounds.max.y as u32,
+            );
+            a.draw(|x, y, c| {
+                let idx = (y * texture_row_size + x) as usize;
+                texture_data[idx] = (c * 255.0) as u8;
+            });
+
+            eprintln!("texture_data: {:?}", texture_data);
+        }*/
+
+        for x in 0..50 {
+            for y in 0..50 {
+                texture_data[(y * texture_row_size + x) as usize] = 255;
+            }
+        }
+
         let size = wgpu::Extent3d {
-            width,
-            height,
+            width: texture_row_size,
+            height: texture_rows,
             depth_or_array_layers: 1,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -73,22 +77,41 @@ impl GlyphCacheTexture {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         });
 
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &texture_data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: std::num::NonZeroU32::new(texture_row_size as u32),
+                rows_per_image: std::num::NonZeroU32::new(texture_rows as u32),
+            },
+            size,
+        );
+
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
 
         Self {
+            font_path,
+            px_scale,
+            cached_chars,
+            cached_bounding_boxes,
             texture,
             view,
             sampler,
-            upload_buffer_size: Self::INITIAL_UPLOAD_BUFFER_SIZE,
         }
     }
 }
@@ -121,7 +144,34 @@ impl Vertex {
     }
 }
 
-pub struct GfxState<'a> {
+const VERTICES: [Vertex; 6] = [
+    Vertex {
+        position: [-0.9, 0.9],
+        tex_coords: [0.0, 0.0],
+    },
+    Vertex {
+        position: [-0.9, -0.9],
+        tex_coords: [0.0, 1.0],
+    },
+    Vertex {
+        position: [0.9, -0.9],
+        tex_coords: [1.0, 1.0],
+    },
+    Vertex {
+        position: [0.9, -0.9],
+        tex_coords: [1.0, 1.0],
+    },
+    Vertex {
+        position: [0.9, 0.9],
+        tex_coords: [1.0, 0.0],
+    },
+    Vertex {
+        position: [-0.9, 0.9],
+        tex_coords: [0.0, 0.0],
+    },
+];
+
+pub struct GfxState {
     surface: wgpu::Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -129,8 +179,6 @@ pub struct GfxState<'a> {
     size: winit::dpi::PhysicalSize<u32>,
     scale_factor: f64,
     render_pipeline: wgpu::RenderPipeline,
-    font: Font<'a>,
-    glyph_cache: Cache<'a>,
     glyph_cache_texture: GlyphCacheTexture,
     glyph_cache_texture_bind_group: wgpu::BindGroup,
     glyph_vertex_buffer: wgpu::Buffer,
@@ -144,7 +192,7 @@ pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     0.0, 0.0, 0.5, 1.0,
 );
 
-impl<'a> GfxState<'a> {
+impl GfxState {
     pub fn new(window: &Window) -> Self {
         let size = window.inner_size();
 
@@ -181,17 +229,15 @@ impl<'a> GfxState<'a> {
 
         // RUSSTTYPE
         let font_data = include_bytes!("../fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
-        let font = Font::try_from_bytes(font_data as &[u8]).unwrap();
+        //let font = Font::try_from_bytes(font_data as &[u8]).unwrap();
 
         let scale_factor = window.scale_factor();
         let (cache_width, cache_height) =
             ((512.0 * scale_factor) as u32, (512.0 * scale_factor) as u32);
-        let glyph_cache: Cache<'static> = Cache::builder()
-            .dimensions(cache_width, cache_height)
-            .build();
 
         let glyph_cache_texture = GlyphCacheTexture::new(
             &device,
+            &queue,
             Some("glyph_cache_texture"),
             cache_width,
             cache_height,
@@ -265,7 +311,7 @@ impl<'a> GfxState<'a> {
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
-                front_face: wgpu::FrontFace::Cw,
+                front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
                 // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
                 polygon_mode: wgpu::PolygonMode::Fill,
@@ -283,11 +329,18 @@ impl<'a> GfxState<'a> {
             multiview: None,
         });
 
-        let glyph_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        /*let glyph_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glyph_vertex_buffer"),
             size: (6000 as usize * std::mem::size_of::<Vertex>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
+        });*/
+
+        use wgpu::util::DeviceExt;
+        let glyph_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("glyph_vertex_buffer"),
+            contents: bytemuck::cast_slice(&VERTICES),
+            usage: wgpu::BufferUsages::VERTEX,
         });
 
         GfxState {
@@ -298,8 +351,6 @@ impl<'a> GfxState<'a> {
             size,
             scale_factor,
             render_pipeline,
-            font,
-            glyph_cache,
             glyph_cache_texture,
             glyph_cache_texture_bind_group,
             glyph_vertex_buffer,
@@ -336,20 +387,13 @@ impl<'a> GfxState<'a> {
         (adapter, device, queue)
     }
 
-    pub fn resize(
-        &mut self,
-        new_size: Option<winit::dpi::PhysicalSize<u32>>,
-        new_scale_factor: Option<f64>,
-    ) {
+    pub fn resize(&mut self, new_size: Option<winit::dpi::PhysicalSize<u32>>) {
         let new_size_apply = new_size.unwrap_or(self.size);
         if new_size_apply.width > 0 && new_size_apply.height > 0 {
             self.size = new_size_apply;
             self.config.width = new_size_apply.width;
             self.config.height = new_size_apply.height;
             self.surface.configure(&self.device, &self.config);
-            if let Some(scale_factor) = new_scale_factor {
-                self.scale_factor = scale_factor;
-            }
         }
     }
 
@@ -366,126 +410,6 @@ impl<'a> GfxState<'a> {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
-
-        let display_text = text.unwrap_or("NOTHING");
-
-        let width = self.size.width;
-        let glyphs = layout_paragraph(
-            &self.font,
-            Scale::uniform(128.0 * self.scale_factor as f32),
-            width,
-            display_text,
-        );
-
-        for glyph in &glyphs {
-            self.glyph_cache.queue_glyph(0, glyph.clone());
-        }
-
-        self.glyph_cache
-            .cache_queued(|rect, data| {
-                let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
-                let width = rect.width() as usize;
-                let height = rect.height() as usize;
-                let padded_width_padding = (align - width % align) % align;
-                let padded_width = width + padded_width_padding;
-                let padded_data_size = (padded_width * height) as u64;
-                self.glyph_cache_texture.upload_buffer_size = std::cmp::max(
-                    padded_data_size,
-                    self.glyph_cache_texture.upload_buffer_size,
-                );
-
-                let mut padded_data_vec: Vec<u8> = vec![0; padded_data_size as usize];
-
-                for row in 0..height {
-                    padded_data_vec[row * padded_width..row * padded_width + width]
-                        .copy_from_slice(&data[row * width..(row + 1) * width])
-                }
-
-                let padded_data = &padded_data_vec[..];
-                self.queue.write_texture(
-                    wgpu::ImageCopyTexture {
-                        texture: &self.glyph_cache_texture.texture,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d {
-                            x: rect.min.x,
-                            y: rect.min.y,
-                            z: 0,
-                        },
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    padded_data,
-                    wgpu::ImageDataLayout {
-                        offset: 0,
-                        bytes_per_row: std::num::NonZeroU32::new(padded_width as u32),
-                        rows_per_image: std::num::NonZeroU32::new(height as u32),
-                    },
-                    wgpu::Extent3d {
-                        width: width as u32,
-                        height: height as u32,
-                        depth_or_array_layers: 1,
-                    },
-                )
-            })
-            .expect("Unable to write queued glypth to texture");
-
-        let origin = rusttype::point(0.0, 0.0);
-        let screen_width = self.size.width as f32;
-        let screen_height = self.size.height as f32;
-
-        let vertices: Vec<Vertex> = glyphs
-            .iter()
-            .filter_map(|g| self.glyph_cache.rect_for(0, g).ok().flatten())
-            .flat_map(|(uv_rect, screen_rect)| {
-                //eprintln!("screen_rect: {:?}", screen_rect);
-
-                let rect = Rect {
-                    min: origin
-                        + (rusttype::vector(
-                            screen_rect.min.x as f32 / screen_width - 0.5,
-                            0.5 - screen_rect.min.y as f32 / screen_height,
-                        )),
-                    max: origin
-                        + (rusttype::vector(
-                            screen_rect.max.x as f32 / screen_width - 0.5,
-                            0.5 - screen_rect.max.y as f32 / screen_height,
-                        )),
-                };
-                vec![
-                    Vertex {
-                        position: [rect.min.x, rect.max.y],
-                        tex_coords: [uv_rect.min.x, uv_rect.max.y],
-                    },
-                    Vertex {
-                        position: [rect.min.x, rect.min.y],
-                        tex_coords: [uv_rect.min.x, uv_rect.min.y],
-                    },
-                    Vertex {
-                        position: [rect.max.x, rect.min.y],
-                        tex_coords: [uv_rect.max.x, uv_rect.min.y],
-                    },
-                    Vertex {
-                        position: [rect.max.x, rect.min.y],
-                        tex_coords: [uv_rect.max.x, uv_rect.min.y],
-                    },
-                    Vertex {
-                        position: [rect.max.x, rect.max.y],
-                        tex_coords: [uv_rect.max.x, uv_rect.max.y],
-                    },
-                    Vertex {
-                        position: [rect.min.x, rect.max.y],
-                        tex_coords: [uv_rect.min.x, uv_rect.max.y],
-                    },
-                ]
-            })
-            .collect();
-
-        //eprintln!("Vertices: {:?}", vertices);
-
-        self.queue.write_buffer(
-            &self.glyph_vertex_buffer,
-            0,
-            bytemuck::cast_slice(&vertices),
-        );
 
         // begin_render_pass borrows encoder mutably, so we need to make sure that the borrow
         // is dropped before we can call encoder.finish()
@@ -519,7 +443,7 @@ impl<'a> GfxState<'a> {
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.glyph_cache_texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.glyph_vertex_buffer.slice(..));
-            render_pass.draw(0..vertices.len() as u32, 0..1);
+            render_pass.draw(0..VERTICES.len() as u32, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

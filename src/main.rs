@@ -83,10 +83,10 @@ fn main() -> Result<()> {
                     *control_flow = ControlFlow::Exit
                 }
                 WindowEvent::Resized(physical_size) => {
-                    gfx_state.resize(Some(*physical_size), Some(window.scale_factor()));
+                    gfx_state.resize(Some(*physical_size));
                 }
                 WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                    gfx_state.resize(Some(**new_inner_size), Some(window.scale_factor()));
+                    gfx_state.resize(Some(**new_inner_size));
                 }
                 _ => {}
             }
@@ -101,7 +101,7 @@ fn main() -> Result<()> {
                 match gfx_state.render(Some("ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")) {
                     Ok(_) => {}
                     // Reconfigure the surface if lost
-                    Err(GameError::WgpuError(wgpu::SurfaceError::Lost)) => gfx_state.resize(None, None),
+                    Err(GameError::WgpuError(wgpu::SurfaceError::Lost)) => gfx_state.resize(None),
                     // Out of graphics memory probably means we should quit.
                     Err(GameError::WgpuError(wgpu::SurfaceError::OutOfMemory)) => *control_flow = ControlFlow::Exit,
                     Err(e) => eprintln!("{:?}", e),
