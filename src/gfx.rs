@@ -40,7 +40,7 @@ impl GlyphCacheTexture {
         let texture_rows = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let mut texture_data: Vec<u8> = vec![0; (texture_row_size * texture_rows) as usize];
 
-        /*if let Some(a) = font.outline_glyph(a_glyph) {
+        if let Some(a) = font.outline_glyph(a_glyph) {
             let px_bounds = a.px_bounds();
             cached_bounding_boxes[0] = cgmath::Matrix2::<u32>::new(
                 px_bounds.min.x as u32,
@@ -53,18 +53,20 @@ impl GlyphCacheTexture {
                 texture_data[idx] = (c * 255.0) as u8;
             });
 
-            eprintln!("texture_data: {:?}", texture_data);
-        }*/
-
-        for x in 0..50 {
-            for y in 0..50 {
-                texture_data[(y * texture_row_size + x) as usize] = 255;
-            }
+            //eprintln!("texture_data: {:?}", texture_data);
         }
 
+        /*for row in 0..wgpu::COPY_BYTES_PER_ROW_ALIGNMENT / 2 {
+            let value =
+                (255.0 - (row as f32 / wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as f32) * 255.0) as u8;
+            for column in 0..wgpu::COPY_BYTES_PER_ROW_ALIGNMENT / 2 {
+                texture_data[(row * texture_row_size + column) as usize] = value;
+            }
+        }*/
+
         let size = wgpu::Extent3d {
-            width: texture_row_size,
-            height: texture_rows,
+            width: wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
+            height: wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
             depth_or_array_layers: 1,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -95,9 +97,9 @@ impl GlyphCacheTexture {
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::Repeat,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::FilterMode::Linear,
@@ -119,7 +121,7 @@ impl GlyphCacheTexture {
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
-    position: [f32; 2],
+    position: [f32; 3],
     tex_coords: [f32; 2],
 }
 
@@ -130,7 +132,7 @@ impl Vertex {
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
+                    format: wgpu::VertexFormat::Float32x3,
                     offset: 0,
                     shader_location: 0,
                 },
@@ -146,27 +148,27 @@ impl Vertex {
 
 const VERTICES: [Vertex; 6] = [
     Vertex {
-        position: [-0.9, 0.9],
+        position: [-0.9, 0.9, 0.0],
         tex_coords: [0.0, 0.0],
     },
     Vertex {
-        position: [-0.9, -0.9],
+        position: [-0.9, -0.9, 0.0],
         tex_coords: [0.0, 1.0],
     },
     Vertex {
-        position: [0.9, -0.9],
+        position: [0.9, -0.9, 0.0],
         tex_coords: [1.0, 1.0],
     },
     Vertex {
-        position: [0.9, -0.9],
+        position: [0.9, -0.9, 0.0],
         tex_coords: [1.0, 1.0],
     },
     Vertex {
-        position: [0.9, 0.9],
+        position: [0.9, 0.9, 0.0],
         tex_coords: [1.0, 0.0],
     },
     Vertex {
-        position: [-0.9, 0.9],
+        position: [-0.9, 0.9, 0.0],
         tex_coords: [0.0, 0.0],
     },
 ];
