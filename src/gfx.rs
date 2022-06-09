@@ -3,13 +3,16 @@ use winit::window::Window;
 
 use crate::error::Result;
 
-use ab_glyph::{Font, FontRef, Glyph};
+use ab_glyph::Font;
 
 pub struct GlyphCacheTexture {
     pub font_path: std::path::PathBuf,
-    pub px_scale: f32,
+    pub px_scale: ab_glyph::PxScale,
     cached_chars: Vec<char>,
+    cached_px_dimensions: Vec<(f32, f32)>,
     cached_bounding_boxes: Vec<cgmath::Matrix2<f32>>,
+    max_x_assigned: usize,
+    max_y_assigned: usize,
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
@@ -19,27 +22,46 @@ impl GlyphCacheTexture {
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        label: Option<&str>,
-        width: u32,
-        height: u32,
+        initial_px_scale: ab_glyph::PxScale,
+        window_scale_factor: f32,
     ) -> Self {
-        let px_scale = 128.0;
+        let label = Some("glyph_cache_texture");
+        let px_scale = ab_glyph::PxScale {
+            x: initial_px_scale.x * window_scale_factor,
+            y: initial_px_scale.y * window_scale_factor,
+        };
+
         let font_path = std::path::PathBuf::from("../fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
         let font_data = include_bytes!("../fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
         let font = ab_glyph::FontRef::try_from_slice(font_data).expect("Unable to load font.");
+
         let a_glyph: ab_glyph::Glyph = font
             .glyph_id('a')
             .with_scale_and_position(px_scale, ab_glyph::point(0.0, 0.0));
 
         let cached_chars: Vec<char> = vec!['a'];
         let mut cached_bounding_boxes: Vec<cgmath::Matrix2<f32>> = Vec::new();
+        let mut cached_px_dimensions: Vec<(f32, f32)> = Vec::new();
 
-        let texture_row_size = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let texture_rows = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let base_row_size = px_scale.x.ceil() as usize * 32;
+        let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
+        // Texture is R8Unorm i.e. one byte per pixel.
+        let texture_row_size =
+            base_row_size + ((alignment - (base_row_size % alignment)) % alignment);
+        eprintln!(
+            "base_row_size: {}, alignment: {}, texture_row_size: {}",
+            base_row_size, alignment, texture_row_size
+        );
+
+        let texture_rows = px_scale.y.ceil() as usize * 32;
+
         let mut texture_data: Vec<u8> = vec![0; (texture_row_size * texture_rows) as usize];
 
         let mut current_pixel_offset_x: usize = 0;
         let mut current_pixel_offset_y: usize = 0;
+
+        let mut max_y_assigned: usize = 0;
+        let mut max_x_assigned: usize = 0;
 
         if let Some(a) = font.outline_glyph(a_glyph) {
             let px_bounds = a.px_bounds();
@@ -47,6 +69,7 @@ impl GlyphCacheTexture {
             let texture_offset_v: f32 = current_pixel_offset_y as f32 / texture_rows as f32;
             let px_width = px_bounds.max.x - px_bounds.min.x;
             let px_height = px_bounds.max.y - px_bounds.min.y;
+            cached_px_dimensions.push((px_width, px_height));
             cached_bounding_boxes.push(cgmath::Matrix2::<f32>::new(
                 texture_offset_u,
                 texture_offset_v,
@@ -55,14 +78,27 @@ impl GlyphCacheTexture {
             ));
 
             a.draw(|x, y, c| {
-                let idx = (y * texture_row_size + x) as usize;
+                max_x_assigned = std::cmp::max(max_x_assigned, x as usize);
+                max_y_assigned = std::cmp::max(max_y_assigned, y as usize);
+                let idx = y as usize * texture_row_size + x as usize;
                 texture_data[idx] = (c * 255.0) as u8;
             });
         }
 
+        // This is some branchless programming. The terms multiply by 1 or 0 depending on the
+        // comparison result.
+        current_pixel_offset_x = (max_x_assigned + 1)
+            * (1 - ((max_x_assigned + (px_scale.x.ceil() as usize) > texture_row_size) as usize));
+        current_pixel_offset_y = (max_y_assigned + 1) * ((current_pixel_offset_x == 0) as usize);
+
+        eprintln!(
+            "max_x_assigned: {}, max_y_assigned: {}, current_pixel_offset_x: {}, current_pixel_offset_y: {}", 
+            max_x_assigned, max_y_assigned, current_pixel_offset_x, current_pixel_offset_y
+        );
+
         let size = wgpu::Extent3d {
-            width: wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
-            height: wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
+            width: texture_row_size as u32,
+            height: texture_rows as u32,
             depth_or_array_layers: 1,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -106,50 +142,14 @@ impl GlyphCacheTexture {
             font_path,
             px_scale,
             cached_chars,
+            cached_px_dimensions,
             cached_bounding_boxes,
+            max_x_assigned,
+            max_y_assigned,
             texture,
             view,
             sampler,
         }
-    }
-
-    pub fn get_vertices_for_char(&self, character: char, x: f32, y: f32) -> Result<Vec<Vertex>> {
-        let idx = self
-            .cached_chars
-            .iter()
-            .position(|c| *c == character)
-            .unwrap();
-
-        let bounding_box = self.cached_bounding_boxes[idx];
-        let width: f32 = 45.0 / 1920.0;
-        let height: f32 = 62.0 / 1080.0;
-
-        Ok(vec![
-            Vertex {
-                position: [x, y, 0.0],
-                tex_coords: [bounding_box.x.x, bounding_box.x.y],
-            },
-            Vertex {
-                position: [x, y - height, 0.0],
-                tex_coords: [bounding_box.x.x, bounding_box.y.y],
-            },
-            Vertex {
-                position: [x + width, y - height, 0.0],
-                tex_coords: [bounding_box.y.x, bounding_box.y.y],
-            },
-            Vertex {
-                position: [x + width, y - height, 0.0],
-                tex_coords: [bounding_box.y.x, bounding_box.y.y],
-            },
-            Vertex {
-                position: [x + width, y, 0.0],
-                tex_coords: [bounding_box.y.x, bounding_box.x.y],
-            },
-            Vertex {
-                position: [x, y, 0.0],
-                tex_coords: [bounding_box.x.x, bounding_box.x.y],
-            },
-        ])
     }
 }
 
@@ -214,7 +214,7 @@ pub struct GfxState {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
-    scale_factor: f64,
+    scale_factor: f32,
     render_pipeline: wgpu::RenderPipeline,
     glyph_cache_texture: GlyphCacheTexture,
     glyph_cache_texture_bind_group: wgpu::BindGroup,
@@ -232,6 +232,7 @@ pub const _OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
 impl GfxState {
     pub fn new(window: &Window) -> Self {
         let size = window.inner_size();
+        let scale_factor = window.scale_factor() as f32;
 
         // The instance's main purpose is to create Adapters and Surfaces
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
@@ -264,20 +265,8 @@ impl GfxState {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        //let font_data = include_bytes!("../fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
-        //let font = Font::try_from_bytes(font_data as &[u8]).unwrap();
-
-        let scale_factor = window.scale_factor();
-        let (cache_width, cache_height) =
-            ((512.0 * scale_factor) as u32, (512.0 * scale_factor) as u32);
-
-        let glyph_cache_texture = GlyphCacheTexture::new(
-            &device,
-            &queue,
-            Some("glyph_cache_texture"),
-            cache_width,
-            cache_height,
-        );
+        let glyph_cache_texture =
+            GlyphCacheTexture::new(&device, &queue, ab_glyph::PxScale::from(24.0), scale_factor);
 
         let glyph_cache_texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -424,6 +413,48 @@ impl GfxState {
         }
     }
 
+    pub fn get_vertices_for_char(&self, character: char, x: f32, y: f32) -> Result<Vec<Vertex>> {
+        let idx = self
+            .glyph_cache_texture
+            .cached_chars
+            .iter()
+            .position(|c| *c == character)
+            .unwrap();
+
+        let bounding_box = self.glyph_cache_texture.cached_bounding_boxes[idx];
+        let logical_width: f32 = self.glyph_cache_texture.cached_px_dimensions[idx].0
+            / (self.size.width as f32 / self.scale_factor);
+        let logical_height: f32 = self.glyph_cache_texture.cached_px_dimensions[idx].1
+            / (self.size.height as f32 / self.scale_factor);
+
+        Ok(vec![
+            Vertex {
+                position: [x, y, 0.0],
+                tex_coords: [bounding_box.x.x, bounding_box.x.y],
+            },
+            Vertex {
+                position: [x, y - logical_height, 0.0],
+                tex_coords: [bounding_box.x.x, bounding_box.y.y],
+            },
+            Vertex {
+                position: [x + logical_width, y - logical_height, 0.0],
+                tex_coords: [bounding_box.y.x, bounding_box.y.y],
+            },
+            Vertex {
+                position: [x + logical_width, y - logical_height, 0.0],
+                tex_coords: [bounding_box.y.x, bounding_box.y.y],
+            },
+            Vertex {
+                position: [x + logical_width, y, 0.0],
+                tex_coords: [bounding_box.y.x, bounding_box.x.y],
+            },
+            Vertex {
+                position: [x, y, 0.0],
+                tex_coords: [bounding_box.x.x, bounding_box.x.y],
+            },
+        ])
+    }
+
     pub fn render(&mut self, text: Option<&str>) -> Result<()> {
         // Get SurfaceTexture
         let output = self.surface.get_current_texture()?;
@@ -467,10 +498,7 @@ impl GfxState {
                 depth_stencil_attachment: None,
             });
 
-            let vertices = self
-                .glyph_cache_texture
-                .get_vertices_for_char('a', -0.9, 0.9)
-                .unwrap();
+            let vertices = self.get_vertices_for_char('a', -0.9, 0.9).unwrap();
 
             self.queue.write_buffer(
                 &self.glyph_vertex_buffer,

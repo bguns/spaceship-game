@@ -79,7 +79,6 @@ fn main() -> Result<()> {
         } if window_id == window.id() => {
             match event {
                 WindowEvent::CloseRequested => {
-                    println!("The close button was pressed; stopping");
                     *control_flow = ControlFlow::Exit
                 }
                 WindowEvent::Resized(physical_size) => {
