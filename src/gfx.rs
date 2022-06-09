@@ -9,8 +9,8 @@ pub struct GlyphCacheTexture {
     pub font_path: std::path::PathBuf,
     pub px_scale: ab_glyph::PxScale,
     cached_chars: Vec<char>,
-    cached_px_dimensions: Vec<(f32, f32)>,
-    cached_bounding_boxes: Vec<cgmath::Matrix2<f32>>,
+    cached_px_bounds: Vec<ab_glyph::Rect>,
+    cached_uv_bounds: Vec<cgmath::Matrix2<f32>>,
     max_x_assigned: usize,
     max_y_assigned: usize,
     pub texture: wgpu::Texture,
@@ -35,13 +35,11 @@ impl GlyphCacheTexture {
         let font_data = include_bytes!("../fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
         let font = ab_glyph::FontRef::try_from_slice(font_data).expect("Unable to load font.");
 
-        let a_glyph: ab_glyph::Glyph = font
-            .glyph_id('a')
-            .with_scale_and_position(px_scale, ab_glyph::point(0.0, 0.0));
+        let a_glyph: ab_glyph::Glyph = font.glyph_id('a').with_scale(px_scale);
 
-        let cached_chars: Vec<char> = vec!['a'];
-        let mut cached_bounding_boxes: Vec<cgmath::Matrix2<f32>> = Vec::new();
-        let mut cached_px_dimensions: Vec<(f32, f32)> = Vec::new();
+        let cached_chars: Vec<char> = vec!['a', 'b'];
+        let mut cached_uv_bounds: Vec<cgmath::Matrix2<f32>> = Vec::new();
+        let mut cached_px_bounds: Vec<ab_glyph::Rect> = Vec::new();
 
         let base_row_size = px_scale.x.ceil() as usize * 32;
         let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
@@ -65,12 +63,13 @@ impl GlyphCacheTexture {
 
         if let Some(a) = font.outline_glyph(a_glyph) {
             let px_bounds = a.px_bounds();
+            eprintln!("a.px_bounds: {:?}", px_bounds);
             let texture_offset_u: f32 = current_pixel_offset_x as f32 / texture_row_size as f32;
             let texture_offset_v: f32 = current_pixel_offset_y as f32 / texture_rows as f32;
             let px_width = px_bounds.max.x - px_bounds.min.x;
             let px_height = px_bounds.max.y - px_bounds.min.y;
-            cached_px_dimensions.push((px_width, px_height));
-            cached_bounding_boxes.push(cgmath::Matrix2::<f32>::new(
+            cached_px_bounds.push(px_bounds);
+            cached_uv_bounds.push(cgmath::Matrix2::<f32>::new(
                 texture_offset_u,
                 texture_offset_v,
                 texture_offset_u + px_width / texture_row_size as f32,
@@ -83,18 +82,56 @@ impl GlyphCacheTexture {
                 let idx = y as usize * texture_row_size + x as usize;
                 texture_data[idx] = (c * 255.0) as u8;
             });
+
+            current_pixel_offset_x = max_x_assigned + 1;
         }
 
-        // This is some branchless programming. The terms multiply by 1 or 0 depending on the
-        // comparison result.
-        current_pixel_offset_x = (max_x_assigned + 1)
-            * (1 - ((max_x_assigned + (px_scale.x.ceil() as usize) > texture_row_size) as usize));
-        current_pixel_offset_y = (max_y_assigned + 1) * ((current_pixel_offset_x == 0) as usize);
+        let b_glyph: ab_glyph::Glyph = font.glyph_id('b').with_scale(px_scale);
 
-        eprintln!(
-            "max_x_assigned: {}, max_y_assigned: {}, current_pixel_offset_x: {}, current_pixel_offset_y: {}", 
-            max_x_assigned, max_y_assigned, current_pixel_offset_x, current_pixel_offset_y
-        );
+        if let Some(b) = font.outline_glyph(b_glyph) {
+            let px_bounds = b.px_bounds();
+            eprintln!("b.px_bounds: {:?}", px_bounds);
+            let px_width = px_bounds.max.x - px_bounds.min.x;
+            let px_height = px_bounds.max.y - px_bounds.min.y;
+
+            if current_pixel_offset_x + px_width.ceil() as usize > texture_row_size {
+                current_pixel_offset_x = 0;
+                max_x_assigned = 0;
+                current_pixel_offset_y = max_y_assigned + 1;
+            }
+
+            eprintln!(
+                "a - max_x_assigned: {}, max_y_assigned: {}, current_pixel_offset_x: {}, current_pixel_offset_y: {}", 
+                max_x_assigned, max_y_assigned, current_pixel_offset_x, current_pixel_offset_y
+            );
+
+            let texture_offset_u: f32 = current_pixel_offset_x as f32 / texture_row_size as f32;
+            let texture_offset_v: f32 = current_pixel_offset_y as f32 / texture_rows as f32;
+
+            cached_px_bounds.push(px_bounds);
+            cached_uv_bounds.push(cgmath::Matrix2::<f32>::new(
+                texture_offset_u,
+                texture_offset_v,
+                texture_offset_u + px_width / texture_row_size as f32,
+                texture_offset_v + px_height / texture_rows as f32,
+            ));
+
+            b.draw(|x, y, c| {
+                let offset_x = x as usize + current_pixel_offset_x;
+                let offset_y = y as usize + current_pixel_offset_y;
+                max_x_assigned = std::cmp::max(max_x_assigned, offset_x);
+                max_y_assigned = std::cmp::max(max_y_assigned, offset_y);
+                let idx = offset_y * texture_row_size + offset_x;
+                texture_data[idx] = (c * 255.0) as u8;
+            });
+
+            current_pixel_offset_x = max_x_assigned + 1;
+
+            eprintln!(
+                "b - max_x_assigned: {}, max_y_assigned: {}, current_pixel_offset_x: {}, current_pixel_offset_y: {}", 
+                max_x_assigned, max_y_assigned, current_pixel_offset_x, current_pixel_offset_y
+            );
+        }
 
         let size = wgpu::Extent3d {
             width: texture_row_size as u32,
@@ -142,8 +179,8 @@ impl GlyphCacheTexture {
             font_path,
             px_scale,
             cached_chars,
-            cached_px_dimensions,
-            cached_bounding_boxes,
+            cached_px_bounds,
+            cached_uv_bounds,
             max_x_assigned,
             max_y_assigned,
             texture,
@@ -180,33 +217,6 @@ impl Vertex {
         }
     }
 }
-
-/*const VERTICES: [Vertex; 6] = [
-    Vertex {
-        position: [-0.9, 0.9, 0.0],
-        tex_coords: [0.0, 0.0],
-    },
-    Vertex {
-        position: [-0.9, -0.9, 0.0],
-        tex_coords: [0.0, 1.0],
-    },
-    Vertex {
-        position: [0.9, -0.9, 0.0],
-        tex_coords: [1.0, 1.0],
-    },
-    Vertex {
-        position: [0.9, -0.9, 0.0],
-        tex_coords: [1.0, 1.0],
-    },
-    Vertex {
-        position: [0.9, 0.9, 0.0],
-        tex_coords: [1.0, 0.0],
-    },
-    Vertex {
-        position: [-0.9, 0.9, 0.0],
-        tex_coords: [0.0, 0.0],
-    },
-];*/
 
 pub struct GfxState {
     surface: wgpu::Surface,
@@ -265,8 +275,12 @@ impl GfxState {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let glyph_cache_texture =
-            GlyphCacheTexture::new(&device, &queue, ab_glyph::PxScale::from(24.0), scale_factor);
+        let glyph_cache_texture = GlyphCacheTexture::new(
+            &device,
+            &queue,
+            ab_glyph::PxScale::from(256.0),
+            scale_factor,
+        );
 
         let glyph_cache_texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -413,7 +427,12 @@ impl GfxState {
         }
     }
 
-    pub fn get_vertices_for_char(&self, character: char, x: f32, y: f32) -> Result<Vec<Vertex>> {
+    pub fn get_vertices_for_char(
+        &self,
+        character: char,
+        x: f32,
+        baseline_y: f32,
+    ) -> Result<Vec<Vertex>> {
         let idx = self
             .glyph_cache_texture
             .cached_chars
@@ -421,35 +440,44 @@ impl GfxState {
             .position(|c| *c == character)
             .unwrap();
 
-        let bounding_box = self.glyph_cache_texture.cached_bounding_boxes[idx];
-        let logical_width: f32 = self.glyph_cache_texture.cached_px_dimensions[idx].0
-            / (self.size.width as f32 / self.scale_factor);
-        let logical_height: f32 = self.glyph_cache_texture.cached_px_dimensions[idx].1
-            / (self.size.height as f32 / self.scale_factor);
+        let scaled_width = self.size.width as f32 / self.scale_factor;
+        let scaled_height = self.size.height as f32 / self.scale_factor;
+
+        let bounding_box = self.glyph_cache_texture.cached_uv_bounds[idx];
+
+        let px_bounds = self.glyph_cache_texture.cached_px_bounds[idx];
+
+        let left = x + px_bounds.min.x / scaled_width;
+        let right = x + px_bounds.max.x / scaled_width;
+        // ab_glyph assumes opengl coordinates (0, 0 top left),
+        // but wgpu uses DX11/Metal coordinates (0, 0 center),
+        // so y axis needs to subtract bounds, not add
+        let top = baseline_y - px_bounds.min.y / scaled_height;
+        let bottom = baseline_y - px_bounds.max.y / scaled_height;
 
         Ok(vec![
             Vertex {
-                position: [x, y, 0.0],
+                position: [left, top, 0.0],
                 tex_coords: [bounding_box.x.x, bounding_box.x.y],
             },
             Vertex {
-                position: [x, y - logical_height, 0.0],
+                position: [left, bottom, 0.0],
                 tex_coords: [bounding_box.x.x, bounding_box.y.y],
             },
             Vertex {
-                position: [x + logical_width, y - logical_height, 0.0],
+                position: [right, bottom, 0.0],
                 tex_coords: [bounding_box.y.x, bounding_box.y.y],
             },
             Vertex {
-                position: [x + logical_width, y - logical_height, 0.0],
+                position: [right, bottom, 0.0],
                 tex_coords: [bounding_box.y.x, bounding_box.y.y],
             },
             Vertex {
-                position: [x + logical_width, y, 0.0],
+                position: [right, top, 0.0],
                 tex_coords: [bounding_box.y.x, bounding_box.x.y],
             },
             Vertex {
-                position: [x, y, 0.0],
+                position: [left, top, 0.0],
                 tex_coords: [bounding_box.x.x, bounding_box.x.y],
             },
         ])
@@ -485,9 +513,9 @@ impl GfxState {
                         ops: wgpu::Operations {
                             // Load tells wgpu how to handle colors stored from the previous frame (we clear the screen)
                             load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.1,
-                                g: 0.2,
-                                b: 0.3,
+                                r: 25.0 / 255.0,
+                                g: 25.0 / 255.0,
+                                b: 25.0 / 255.0,
                                 a: 1.0,
                             }),
                             // We want to store the rendered results to the (Surface)Texture behind the TextureView (the view)
@@ -498,7 +526,22 @@ impl GfxState {
                 depth_stencil_attachment: None,
             });
 
-            let vertices = self.get_vertices_for_char('a', -0.9, 0.9).unwrap();
+            let mut vertices = self
+                .get_vertices_for_char(
+                    'a',
+                    (256.0 / self.size.width as f32) - 1.0,
+                    1.0 - (256.0 / self.size.height as f32),
+                )
+                .unwrap();
+            vertices.append(
+                &mut self
+                    .get_vertices_for_char(
+                        'b',
+                        (256.0 / self.size.width as f32) - 1.0 + 256.0 / self.size.width as f32,
+                        1.0 - (256.0 / self.size.height as f32),
+                    )
+                    .unwrap(),
+            );
 
             self.queue.write_buffer(
                 &self.glyph_vertex_buffer,
