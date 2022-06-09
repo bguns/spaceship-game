@@ -127,7 +127,6 @@ fn main() -> Result<()> {
                 }
 
                 if game_state.should_quit {
-                    println!("Should quit");
                     *control_flow = ControlFlow::Exit;
                 }
             }

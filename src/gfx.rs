@@ -8,16 +8,14 @@ use ab_glyph::{Font, FontRef, Glyph};
 pub struct GlyphCacheTexture {
     pub font_path: std::path::PathBuf,
     pub px_scale: f32,
-    cached_chars: [char; 1],
-    cached_bounding_boxes: [cgmath::Matrix2<u32>; 1],
+    cached_chars: Vec<char>,
+    cached_bounding_boxes: Vec<cgmath::Matrix2<f32>>,
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
 }
 
 impl GlyphCacheTexture {
-    //const INITIAL_UPLOAD_BUFFER_SIZE: u64 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64 * 100;
-
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -33,36 +31,34 @@ impl GlyphCacheTexture {
             .glyph_id('a')
             .with_scale_and_position(px_scale, ab_glyph::point(0.0, 0.0));
 
-        let cached_chars = ['a'];
-        let mut cached_bounding_boxes = [cgmath::Matrix2::<u32>::new(0, 0, 0, 0)];
+        let cached_chars: Vec<char> = vec!['a'];
+        let mut cached_bounding_boxes: Vec<cgmath::Matrix2<f32>> = Vec::new();
 
         let texture_row_size = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let texture_rows = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let mut texture_data: Vec<u8> = vec![0; (texture_row_size * texture_rows) as usize];
 
+        let mut current_pixel_offset_x: usize = 0;
+        let mut current_pixel_offset_y: usize = 0;
+
         if let Some(a) = font.outline_glyph(a_glyph) {
             let px_bounds = a.px_bounds();
-            cached_bounding_boxes[0] = cgmath::Matrix2::<u32>::new(
-                px_bounds.min.x as u32,
-                px_bounds.max.x as u32,
-                px_bounds.min.y as u32,
-                px_bounds.max.y as u32,
-            );
+            let texture_offset_u: f32 = current_pixel_offset_x as f32 / texture_row_size as f32;
+            let texture_offset_v: f32 = current_pixel_offset_y as f32 / texture_rows as f32;
+            let px_width = px_bounds.max.x - px_bounds.min.x;
+            let px_height = px_bounds.max.y - px_bounds.min.y;
+            cached_bounding_boxes.push(cgmath::Matrix2::<f32>::new(
+                texture_offset_u,
+                texture_offset_v,
+                texture_offset_u + px_width / texture_row_size as f32,
+                texture_offset_v + px_height / texture_rows as f32,
+            ));
+
             a.draw(|x, y, c| {
                 let idx = (y * texture_row_size + x) as usize;
                 texture_data[idx] = (c * 255.0) as u8;
             });
-
-            //eprintln!("texture_data: {:?}", texture_data);
         }
-
-        /*for row in 0..wgpu::COPY_BYTES_PER_ROW_ALIGNMENT / 2 {
-            let value =
-                (255.0 - (row as f32 / wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as f32) * 255.0) as u8;
-            for column in 0..wgpu::COPY_BYTES_PER_ROW_ALIGNMENT / 2 {
-                texture_data[(row * texture_row_size + column) as usize] = value;
-            }
-        }*/
 
         let size = wgpu::Extent3d {
             width: wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
@@ -116,6 +112,45 @@ impl GlyphCacheTexture {
             sampler,
         }
     }
+
+    pub fn get_vertices_for_char(&self, character: char, x: f32, y: f32) -> Result<Vec<Vertex>> {
+        let idx = self
+            .cached_chars
+            .iter()
+            .position(|c| *c == character)
+            .unwrap();
+
+        let bounding_box = self.cached_bounding_boxes[idx];
+        let width: f32 = 45.0 / 1920.0;
+        let height: f32 = 62.0 / 1080.0;
+
+        Ok(vec![
+            Vertex {
+                position: [x, y, 0.0],
+                tex_coords: [bounding_box.x.x, bounding_box.x.y],
+            },
+            Vertex {
+                position: [x, y - height, 0.0],
+                tex_coords: [bounding_box.x.x, bounding_box.y.y],
+            },
+            Vertex {
+                position: [x + width, y - height, 0.0],
+                tex_coords: [bounding_box.y.x, bounding_box.y.y],
+            },
+            Vertex {
+                position: [x + width, y - height, 0.0],
+                tex_coords: [bounding_box.y.x, bounding_box.y.y],
+            },
+            Vertex {
+                position: [x + width, y, 0.0],
+                tex_coords: [bounding_box.y.x, bounding_box.x.y],
+            },
+            Vertex {
+                position: [x, y, 0.0],
+                tex_coords: [bounding_box.x.x, bounding_box.x.y],
+            },
+        ])
+    }
 }
 
 #[repr(C)]
@@ -146,7 +181,7 @@ impl Vertex {
     }
 }
 
-const VERTICES: [Vertex; 6] = [
+/*const VERTICES: [Vertex; 6] = [
     Vertex {
         position: [-0.9, 0.9, 0.0],
         tex_coords: [0.0, 0.0],
@@ -171,7 +206,7 @@ const VERTICES: [Vertex; 6] = [
         position: [-0.9, 0.9, 0.0],
         tex_coords: [0.0, 0.0],
     },
-];
+];*/
 
 pub struct GfxState {
     surface: wgpu::Surface,
@@ -187,7 +222,7 @@ pub struct GfxState {
 }
 
 #[rustfmt::skip]
-pub const OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
+pub const _OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     1.0, 0.0, 0.0, 0.0,
     0.0, 1.0, 0.0, 0.0,
     0.0, 0.0, 0.5, 0.0,
@@ -229,8 +264,7 @@ impl GfxState {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        // RUSSTTYPE
-        let font_data = include_bytes!("../fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
+        //let font_data = include_bytes!("../fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
         //let font = Font::try_from_bytes(font_data as &[u8]).unwrap();
 
         let scale_factor = window.scale_factor();
@@ -283,8 +317,6 @@ impl GfxState {
             ],
         });
 
-        // RUSTTYPE
-
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
@@ -331,18 +363,11 @@ impl GfxState {
             multiview: None,
         });
 
-        /*let glyph_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let glyph_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glyph_vertex_buffer"),
             size: (6000 as usize * std::mem::size_of::<Vertex>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        });*/
-
-        use wgpu::util::DeviceExt;
-        let glyph_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("glyph_vertex_buffer"),
-            contents: bytemuck::cast_slice(&VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
         });
 
         GfxState {
@@ -442,10 +467,21 @@ impl GfxState {
                 depth_stencil_attachment: None,
             });
 
+            let vertices = self
+                .glyph_cache_texture
+                .get_vertices_for_char('a', -0.9, 0.9)
+                .unwrap();
+
+            self.queue.write_buffer(
+                &self.glyph_vertex_buffer,
+                0,
+                bytemuck::cast_slice(&vertices),
+            );
+
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.glyph_cache_texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.glyph_vertex_buffer.slice(..));
-            render_pass.draw(0..VERTICES.len() as u32, 0..1);
+            render_pass.draw(0..vertices.len() as u32, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
