@@ -44,14 +44,19 @@ impl GlyphCacheTexture {
         let base_row_size = px_scale.x.ceil() as usize * 32;
         let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
         // Texture is R8Unorm i.e. one byte per pixel.
-        let texture_row_size =
-            base_row_size + ((alignment - (base_row_size % alignment)) % alignment);
+        let texture_row_size = std::cmp::min(
+            base_row_size + ((alignment - (base_row_size % alignment)) % alignment),
+            device.limits().max_texture_dimension_2d as usize,
+        );
         eprintln!(
             "base_row_size: {}, alignment: {}, texture_row_size: {}",
             base_row_size, alignment, texture_row_size
         );
 
-        let texture_rows = px_scale.y.ceil() as usize * 32;
+        let texture_rows = std::cmp::min(
+            px_scale.y.ceil() as usize * 32,
+            device.limits().max_texture_dimension_2d as usize,
+        );
 
         let mut texture_data: Vec<u8> = vec![0; (texture_row_size * texture_rows) as usize];
 
@@ -275,12 +280,8 @@ impl GfxState {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let glyph_cache_texture = GlyphCacheTexture::new(
-            &device,
-            &queue,
-            ab_glyph::PxScale::from(256.0),
-            scale_factor,
-        );
+        let glyph_cache_texture =
+            GlyphCacheTexture::new(&device, &queue, ab_glyph::PxScale::from(64.0), scale_factor);
 
         let glyph_cache_texture_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -440,20 +441,21 @@ impl GfxState {
             .position(|c| *c == character)
             .unwrap();
 
-        let scaled_width = self.size.width as f32 / self.scale_factor;
-        let scaled_height = self.size.height as f32 / self.scale_factor;
+        // Glyphs are already scaled to scale_factor in the texture cache, don'te rescale here.
+        let surface_width_px = self.size.width as f32;
+        let surface_height_px = self.size.height as f32;
 
         let bounding_box = self.glyph_cache_texture.cached_uv_bounds[idx];
 
         let px_bounds = self.glyph_cache_texture.cached_px_bounds[idx];
 
-        let left = x + px_bounds.min.x / scaled_width;
-        let right = x + px_bounds.max.x / scaled_width;
+        let left = x + px_bounds.min.x / surface_width_px;
+        let right = x + px_bounds.max.x / surface_width_px;
         // ab_glyph assumes opengl coordinates (0, 0 top left),
         // but wgpu uses DX11/Metal coordinates (0, 0 center),
         // so y axis needs to subtract bounds, not add
-        let top = baseline_y - px_bounds.min.y / scaled_height;
-        let bottom = baseline_y - px_bounds.max.y / scaled_height;
+        let top = baseline_y - px_bounds.min.y / surface_height_px;
+        let bottom = baseline_y - px_bounds.max.y / surface_height_px;
 
         Ok(vec![
             Vertex {
@@ -529,16 +531,17 @@ impl GfxState {
             let mut vertices = self
                 .get_vertices_for_char(
                     'a',
-                    (256.0 / self.size.width as f32) - 1.0,
-                    1.0 - (256.0 / self.size.height as f32),
+                    (256.0 / (self.size.width as f32 / self.scale_factor as f32)) - 1.0,
+                    1.0 - (256.0 / (self.size.height as f32 / self.scale_factor as f32)),
                 )
                 .unwrap();
             vertices.append(
                 &mut self
                     .get_vertices_for_char(
                         'b',
-                        (256.0 / self.size.width as f32) - 1.0 + 256.0 / self.size.width as f32,
-                        1.0 - (256.0 / self.size.height as f32),
+                        (256.0 / (self.size.width as f32 / self.scale_factor as f32)) - 1.0
+                            + 256.0 / (self.size.width as f32 / self.scale_factor as f32),
+                        1.0 - (256.0 / (self.size.height as f32 / self.scale_factor as f32)),
                     )
                     .unwrap(),
             );
