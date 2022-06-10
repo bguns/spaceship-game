@@ -15,12 +15,6 @@ impl From<wgpu::SurfaceError> for GameError {
     }
 }
 
-/*impl From<crossterm::ErrorKind> for GameError {
-    fn from(e: crossterm::ErrorKind) -> Self {
-        GameError::CrosstermError(e)
-    }
-}*/
-
 impl fmt::Display for GameError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} ", "[ERROR]")?;
@@ -30,9 +24,7 @@ impl fmt::Display for GameError {
             }
             &GameError::WgpuError(message) => {
                 write!(f, "Wgpu Error: {}", message)
-            } /*&GameError::CrosstermError(crossterm_error) => {
-                  write!(f, "Unexpected crossterm error: {}", crossterm_error)
-              }*/
+            }
         }
     }
 }
