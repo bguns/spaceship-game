@@ -34,7 +34,7 @@ impl Vertex {
     }
 }
 
-pub struct GfxState {
+pub struct GfxState<'a> {
     surface: wgpu::Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -42,7 +42,7 @@ pub struct GfxState {
     size: winit::dpi::PhysicalSize<u32>,
     scale_factor: f32,
     render_pipeline: wgpu::RenderPipeline,
-    glyph_cache: GlyphCache,
+    glyph_cache: GlyphCache<'a>,
     glyph_vertex_buffer: wgpu::Buffer,
 }
 
@@ -54,7 +54,7 @@ pub const _OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     0.0, 0.0, 0.5, 1.0,
 );
 
-impl GfxState {
+impl<'a> GfxState<'a> {
     pub fn new(window: &Window) -> Self {
         let size = window.inner_size();
         let scale_factor = window.scale_factor() as f32;
@@ -90,7 +90,7 @@ impl GfxState {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let glyph_cache =
+        let mut glyph_cache =
             GlyphCache::new(&device, &queue, ab_glyph::PxScale::from(64.0), scale_factor);
 
         /*let glyph_cache_texture_bind_group_layout =
@@ -164,6 +164,11 @@ impl GfxState {
             mapped_at_creation: false,
         });
 
+        glyph_cache.prepare_cache_glyph('a', ab_glyph::PxScale::from(128.0));
+        glyph_cache.prepare_cache_glyph('b', ab_glyph::PxScale::from(128.0));
+
+        glyph_cache.queue_write_texture_if_changed(&queue);
+
         GfxState {
             surface,
             device,
@@ -235,7 +240,7 @@ impl GfxState {
         let surface_width_px = self.size.width as f32;
         let surface_height_px = self.size.height as f32;
 
-        let bounding_box = &self.glyph_cache.cached_uv_bounds[idx];
+        let uv_bounds = &self.glyph_cache.cached_uv_bounds[idx];
 
         let px_bounds = &self.glyph_cache.cached_px_bounds[idx];
 
@@ -250,27 +255,27 @@ impl GfxState {
         Ok(vec![
             Vertex {
                 position: [left, top, 0.0],
-                tex_coords: [bounding_box.x.x, bounding_box.x.y],
+                tex_coords: [uv_bounds.left(), uv_bounds.top()],
             },
             Vertex {
                 position: [left, bottom, 0.0],
-                tex_coords: [bounding_box.x.x, bounding_box.y.y],
+                tex_coords: [uv_bounds.left(), uv_bounds.bottom()],
             },
             Vertex {
                 position: [right, bottom, 0.0],
-                tex_coords: [bounding_box.y.x, bounding_box.y.y],
+                tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
             },
             Vertex {
                 position: [right, bottom, 0.0],
-                tex_coords: [bounding_box.y.x, bounding_box.y.y],
+                tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
             },
             Vertex {
                 position: [right, top, 0.0],
-                tex_coords: [bounding_box.y.x, bounding_box.x.y],
+                tex_coords: [uv_bounds.right(), uv_bounds.top()],
             },
             Vertex {
                 position: [left, top, 0.0],
-                tex_coords: [bounding_box.x.x, bounding_box.x.y],
+                tex_coords: [uv_bounds.left(), uv_bounds.top()],
             },
         ])
     }
@@ -321,7 +326,7 @@ impl GfxState {
             let mut vertices = self
                 .get_vertices_for_char(
                     'a',
-                    ab_glyph::PxScale::from(64.0),
+                    ab_glyph::PxScale::from(128.0),
                     (256.0 / (self.size.width as f32 / self.scale_factor as f32)) - 1.0,
                     1.0 - (256.0 / (self.size.height as f32 / self.scale_factor as f32)),
                 )
@@ -330,7 +335,7 @@ impl GfxState {
                 &mut self
                     .get_vertices_for_char(
                         'b',
-                        ab_glyph::PxScale::from(64.0),
+                        ab_glyph::PxScale::from(128.0),
                         (256.0 / (self.size.width as f32 / self.scale_factor as f32)) - 1.0
                             + 256.0 / (self.size.width as f32 / self.scale_factor as f32),
                         1.0 - (256.0 / (self.size.height as f32 / self.scale_factor as f32)),

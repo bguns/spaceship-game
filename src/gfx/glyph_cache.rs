@@ -20,13 +20,51 @@ impl From<ab_glyph::Rect> for GlyphPxBounds {
     }
 }
 
-pub struct GlyphCache {
+pub struct GlyphUvBounds {
+    uv_bounds: cgmath::Matrix2<f32>,
+}
+
+impl GlyphUvBounds {
+    pub fn new(left: f32, right: f32, top: f32, bottom: f32) -> Self {
+        Self {
+            uv_bounds: cgmath::Matrix2::<f32>::new(left, top, right, bottom),
+        }
+    }
+
+    pub fn top(&self) -> f32 {
+        self.uv_bounds.x.y
+    }
+
+    pub fn bottom(&self) -> f32 {
+        self.uv_bounds.y.y
+    }
+
+    pub fn left(&self) -> f32 {
+        self.uv_bounds.x.x
+    }
+
+    pub fn right(&self) -> f32 {
+        self.uv_bounds.y.x
+    }
+}
+
+pub struct GlyphBounds {
+    pub px_bounds: GlyphPxBounds,
+    pub uv_bounds: GlyphUvBounds,
+}
+
+pub struct GlyphCache<'a> {
     pub font_path: std::path::PathBuf,
+    pub font: ab_glyph::FontRef<'a>,
     pub cached_chars: Vec<(char, ab_glyph::PxScale)>,
     pub cached_px_bounds: Vec<GlyphPxBounds>,
-    pub cached_uv_bounds: Vec<cgmath::Matrix2<f32>>,
+    pub cached_uv_bounds: Vec<GlyphUvBounds>,
+    texture_row_size: usize,
+    texture_rows: usize,
+    current_px_offset: cgmath::Point2<usize>,
     max_x_assigned: usize,
     max_y_assigned: usize,
+    texture_data: Vec<u8>,
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
@@ -34,7 +72,7 @@ pub struct GlyphCache {
     pub texture_bind_group: wgpu::BindGroup,
 }
 
-impl GlyphCache {
+impl<'a> GlyphCache<'a> {
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -51,11 +89,9 @@ impl GlyphCache {
         let font_data = include_bytes!("../../fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
         let font = ab_glyph::FontRef::try_from_slice(font_data).expect("Unable to load font.");
 
-        let a_glyph: ab_glyph::Glyph = font.glyph_id('a').with_scale(px_scale);
-
-        let mut cached_chars: Vec<(char, ab_glyph::PxScale)> = Vec::new();
-        let mut cached_uv_bounds: Vec<cgmath::Matrix2<f32>> = Vec::new();
-        let mut cached_px_bounds: Vec<GlyphPxBounds> = Vec::new();
+        let cached_chars: Vec<(char, ab_glyph::PxScale)> = Vec::new();
+        let cached_uv_bounds: Vec<GlyphUvBounds> = Vec::new();
+        let cached_px_bounds: Vec<GlyphPxBounds> = Vec::new();
 
         let base_row_size = px_scale.x.ceil() as usize * 32;
         let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
@@ -74,87 +110,13 @@ impl GlyphCache {
             device.limits().max_texture_dimension_2d as usize,
         );
 
-        let mut texture_data: Vec<u8> = vec![0; (texture_row_size * texture_rows) as usize];
+        let texture_data: Vec<u8> = vec![0; (texture_row_size * texture_rows) as usize];
 
-        let mut current_pixel_offset_x: usize = 0;
-        let mut current_pixel_offset_y: usize = 0;
+        let current_pixel_offset_x: usize = 0;
+        let current_pixel_offset_y: usize = 0;
 
-        let mut max_y_assigned: usize = 0;
-        let mut max_x_assigned: usize = 0;
-
-        if let Some(a) = font.outline_glyph(a_glyph) {
-            let px_bounds = a.px_bounds();
-            eprintln!("a.px_bounds: {:?}", px_bounds);
-            let texture_offset_u: f32 = current_pixel_offset_x as f32 / texture_row_size as f32;
-            let texture_offset_v: f32 = current_pixel_offset_y as f32 / texture_rows as f32;
-            let px_width = px_bounds.max.x - px_bounds.min.x;
-            let px_height = px_bounds.max.y - px_bounds.min.y;
-            cached_chars.push(('a', px_scale));
-            cached_px_bounds.push(px_bounds.into());
-            cached_uv_bounds.push(cgmath::Matrix2::<f32>::new(
-                texture_offset_u,
-                texture_offset_v,
-                texture_offset_u + px_width / texture_row_size as f32,
-                texture_offset_v + px_height / texture_rows as f32,
-            ));
-
-            a.draw(|x, y, c| {
-                max_x_assigned = std::cmp::max(max_x_assigned, x as usize);
-                max_y_assigned = std::cmp::max(max_y_assigned, y as usize);
-                let idx = y as usize * texture_row_size + x as usize;
-                texture_data[idx] = (c * 255.0) as u8;
-            });
-
-            current_pixel_offset_x = max_x_assigned + 1;
-        }
-
-        let b_glyph: ab_glyph::Glyph = font.glyph_id('b').with_scale(px_scale);
-
-        if let Some(b) = font.outline_glyph(b_glyph) {
-            let px_bounds = b.px_bounds();
-            eprintln!("b.px_bounds: {:?}", px_bounds);
-            let px_width = px_bounds.max.x - px_bounds.min.x;
-            let px_height = px_bounds.max.y - px_bounds.min.y;
-
-            if current_pixel_offset_x + px_width.ceil() as usize > texture_row_size {
-                current_pixel_offset_x = 0;
-                max_x_assigned = 0;
-                current_pixel_offset_y = max_y_assigned + 1;
-            }
-
-            eprintln!(
-                "a - max_x_assigned: {}, max_y_assigned: {}, current_pixel_offset_x: {}, current_pixel_offset_y: {}", 
-                max_x_assigned, max_y_assigned, current_pixel_offset_x, current_pixel_offset_y
-            );
-
-            let texture_offset_u: f32 = current_pixel_offset_x as f32 / texture_row_size as f32;
-            let texture_offset_v: f32 = current_pixel_offset_y as f32 / texture_rows as f32;
-
-            cached_chars.push(('b', px_scale));
-            cached_px_bounds.push(px_bounds.into());
-            cached_uv_bounds.push(cgmath::Matrix2::<f32>::new(
-                texture_offset_u,
-                texture_offset_v,
-                texture_offset_u + px_width / texture_row_size as f32,
-                texture_offset_v + px_height / texture_rows as f32,
-            ));
-
-            b.draw(|x, y, c| {
-                let offset_x = x as usize + current_pixel_offset_x;
-                let offset_y = y as usize + current_pixel_offset_y;
-                max_x_assigned = std::cmp::max(max_x_assigned, offset_x);
-                max_y_assigned = std::cmp::max(max_y_assigned, offset_y);
-                let idx = offset_y * texture_row_size + offset_x;
-                texture_data[idx] = (c * 255.0) as u8;
-            });
-
-            current_pixel_offset_x = max_x_assigned + 1;
-
-            eprintln!(
-                "b - max_x_assigned: {}, max_y_assigned: {}, current_pixel_offset_x: {}, current_pixel_offset_y: {}", 
-                max_x_assigned, max_y_assigned, current_pixel_offset_x, current_pixel_offset_y
-            );
-        }
+        let max_y_assigned: usize = 0;
+        let max_x_assigned: usize = 0;
 
         let size = wgpu::Extent3d {
             width: texture_row_size as u32,
@@ -238,16 +200,87 @@ impl GlyphCache {
 
         Self {
             font_path,
+            font,
             cached_chars,
             cached_px_bounds,
             cached_uv_bounds,
+            current_px_offset: cgmath::Point2 {
+                x: current_pixel_offset_x,
+                y: current_pixel_offset_y,
+            },
             max_x_assigned,
             max_y_assigned,
+            texture_row_size,
+            texture_rows,
+            texture_data,
             texture,
             view,
             sampler,
             texture_bind_group_layout,
             texture_bind_group,
+        }
+    }
+
+    pub fn queue_write_texture_if_changed(&mut self, queue: &wgpu::Queue) {
+        // if (changed) {
+        queue.write_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &self.texture_data,
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: std::num::NonZeroU32::new(self.texture_row_size as u32),
+                rows_per_image: std::num::NonZeroU32::new(self.texture_rows as u32),
+            },
+            wgpu::Extent3d {
+                width: self.texture_row_size as u32,
+                height: self.texture_rows as u32,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    pub fn prepare_cache_glyph(&mut self, character: char, px_scale: ab_glyph::PxScale) {
+        let glyph = self.font.glyph_id(character).with_scale(px_scale);
+        if let Some(g) = self.font.outline_glyph(glyph) {
+            let px_bounds = g.px_bounds();
+            let px_width = px_bounds.max.x - px_bounds.min.x;
+            let px_height = px_bounds.max.y - px_bounds.min.y;
+            eprintln!("{}.px_bounds: {:?}", character, px_bounds);
+
+            if self.current_px_offset.x + px_width.ceil() as usize > self.texture_row_size {
+                self.current_px_offset.x = 0;
+                self.current_px_offset.y = self.max_y_assigned + 1;
+                self.max_x_assigned = 0;
+            }
+
+            let texture_offset_u: f32 =
+                self.current_px_offset.x as f32 / self.texture_row_size as f32;
+            let texture_offset_v: f32 = self.current_px_offset.y as f32 / self.texture_rows as f32;
+
+            self.cached_chars.push((character, px_scale));
+            self.cached_px_bounds.push(px_bounds.into());
+            self.cached_uv_bounds.push(GlyphUvBounds::new(
+                texture_offset_u,
+                texture_offset_u + px_width / self.texture_row_size as f32,
+                texture_offset_v,
+                texture_offset_v + px_height / self.texture_rows as f32,
+            ));
+
+            g.draw(|x, y, c| {
+                let offset_x = x as usize + self.current_px_offset.x;
+                let offset_y = y as usize + self.current_px_offset.y;
+                self.max_x_assigned = std::cmp::max(self.max_x_assigned, x as usize);
+                self.max_y_assigned = std::cmp::max(self.max_y_assigned, y as usize);
+                let idx = offset_y * self.texture_row_size + offset_x;
+                self.texture_data[idx] = (c * 255.0) as u8;
+            });
+
+            self.current_px_offset.x = self.max_x_assigned + 1;
         }
     }
 }
