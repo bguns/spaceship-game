@@ -1,5 +1,6 @@
 use ab_glyph::Font;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlyphPxBounds {
     pub min: cgmath::Point2<f32>,
     pub max: cgmath::Point2<f32>,
@@ -20,6 +21,31 @@ impl From<ab_glyph::Rect> for GlyphPxBounds {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlyphPxScale {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl GlyphPxScale {
+    pub fn from(uniform_scale: f32) -> Self {
+        Self {
+            x: uniform_scale,
+            y: uniform_scale,
+        }
+    }
+}
+
+impl From<ab_glyph::PxScale> for GlyphPxScale {
+    fn from(px_scale: ab_glyph::PxScale) -> Self {
+        Self {
+            x: px_scale.x,
+            y: px_scale.y,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlyphUvBounds {
     uv_bounds: cgmath::Matrix2<f32>,
 }
@@ -48,7 +74,10 @@ impl GlyphUvBounds {
     }
 }
 
-pub struct GlyphBounds {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GlyphData {
+    pub character: char,
+    pub px_scale: GlyphPxScale,
     pub px_bounds: GlyphPxBounds,
     pub uv_bounds: GlyphUvBounds,
 }
@@ -56,15 +85,14 @@ pub struct GlyphBounds {
 pub struct GlyphCache {
     pub font_path: std::path::PathBuf,
     pub font: ab_glyph::FontVec,
-    pub cached_chars: Vec<(char, ab_glyph::PxScale)>,
-    pub cached_px_bounds: Vec<GlyphPxBounds>,
-    pub cached_uv_bounds: Vec<GlyphUvBounds>,
+    pub cached_glyphs: Vec<GlyphData>,
     texture_row_size: usize,
     texture_rows: usize,
     current_px_offset: cgmath::Point2<usize>,
     max_x_assigned: usize,
     max_y_assigned: usize,
     texture_data: Vec<u8>,
+    texture_data_dirty: bool,
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
@@ -90,9 +118,11 @@ impl GlyphCache {
         let font =
             ab_glyph::FontVec::try_from_vec_and_index(font_data, 0).expect("Unable to load font.");
 
-        let cached_chars: Vec<(char, ab_glyph::PxScale)> = Vec::new();
+        let cached_glyphs: Vec<GlyphData> = Vec::new();
+
+        /*let cached_chars: Vec<(char, ab_glyph::PxScale)> = Vec::new();
         let cached_uv_bounds: Vec<GlyphUvBounds> = Vec::new();
-        let cached_px_bounds: Vec<GlyphPxBounds> = Vec::new();
+        let cached_px_bounds: Vec<GlyphPxBounds> = Vec::new();*/
 
         let base_row_size = px_scale.x.ceil() as usize * 32;
         let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
@@ -202,9 +232,7 @@ impl GlyphCache {
         Self {
             font_path,
             font,
-            cached_chars,
-            cached_px_bounds,
-            cached_uv_bounds,
+            cached_glyphs,
             current_px_offset: cgmath::Point2 {
                 x: current_pixel_offset_x,
                 y: current_pixel_offset_y,
@@ -214,6 +242,7 @@ impl GlyphCache {
             texture_row_size,
             texture_rows,
             texture_data,
+            texture_data_dirty: false,
             texture,
             view,
             sampler,
@@ -223,26 +252,29 @@ impl GlyphCache {
     }
 
     pub fn queue_write_texture_if_changed(&mut self, queue: &wgpu::Queue) {
-        // if (changed) {
-        queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &self.texture_data,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: std::num::NonZeroU32::new(self.texture_row_size as u32),
-                rows_per_image: std::num::NonZeroU32::new(self.texture_rows as u32),
-            },
-            wgpu::Extent3d {
-                width: self.texture_row_size as u32,
-                height: self.texture_rows as u32,
-                depth_or_array_layers: 1,
-            },
-        );
+        if self.texture_data_dirty {
+            eprintln!("Writing texture data to texture.");
+            queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &self.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &self.texture_data,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: std::num::NonZeroU32::new(self.texture_row_size as u32),
+                    rows_per_image: std::num::NonZeroU32::new(self.texture_rows as u32),
+                },
+                wgpu::Extent3d {
+                    width: self.texture_row_size as u32,
+                    height: self.texture_rows as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+            self.texture_data_dirty = false;
+        }
     }
 
     pub fn prepare_cache_glyph(&mut self, character: char, px_scale: ab_glyph::PxScale) {
@@ -263,14 +295,28 @@ impl GlyphCache {
                 self.current_px_offset.x as f32 / self.texture_row_size as f32;
             let texture_offset_v: f32 = self.current_px_offset.y as f32 / self.texture_rows as f32;
 
-            self.cached_chars.push((character, px_scale));
+            let glyph_data = GlyphData {
+                character,
+                px_scale: px_scale.into(),
+                px_bounds: px_bounds.into(),
+                uv_bounds: GlyphUvBounds::new(
+                    texture_offset_u,
+                    texture_offset_u + px_width / self.texture_row_size as f32,
+                    texture_offset_v,
+                    texture_offset_v + px_height / self.texture_rows as f32,
+                ),
+            };
+
+            /*self.cached_chars.push((character, px_scale));
             self.cached_px_bounds.push(px_bounds.into());
             self.cached_uv_bounds.push(GlyphUvBounds::new(
                 texture_offset_u,
                 texture_offset_u + px_width / self.texture_row_size as f32,
                 texture_offset_v,
                 texture_offset_v + px_height / self.texture_rows as f32,
-            ));
+            ));*/
+
+            self.cached_glyphs.push(glyph_data);
 
             g.draw(|x, y, c| {
                 let offset_x = x as usize + self.current_px_offset.x;
@@ -282,6 +328,8 @@ impl GlyphCache {
             });
 
             self.current_px_offset.x = self.max_x_assigned + 1;
+
+            self.texture_data_dirty = true;
         }
     }
 }

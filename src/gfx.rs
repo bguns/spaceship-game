@@ -4,7 +4,7 @@ use pollster::FutureExt as _;
 use winit::window::Window;
 
 use crate::error::Result;
-use glyph_cache::GlyphCache;
+use glyph_cache::{GlyphCache, GlyphPxScale};
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -167,8 +167,6 @@ impl GfxState {
         glyph_cache.prepare_cache_glyph('a', ab_glyph::PxScale::from(128.0));
         glyph_cache.prepare_cache_glyph('b', ab_glyph::PxScale::from(128.0));
 
-        glyph_cache.queue_write_texture_if_changed(&queue);
-
         GfxState {
             surface,
             device,
@@ -225,24 +223,25 @@ impl GfxState {
     pub fn get_vertices_for_char(
         &self,
         character: char,
-        px_scale: ab_glyph::PxScale,
+        px_scale: GlyphPxScale,
         x: f32,
         baseline_y: f32,
     ) -> Result<Vec<Vertex>> {
         let idx = self
             .glyph_cache
-            .cached_chars
+            .cached_glyphs
             .iter()
-            .position(|(c, s)| *c == character && *s == px_scale)
+            .position(|g| g.character == character && g.px_scale == px_scale)
             .unwrap();
+
+        let glyph_data = &self.glyph_cache.cached_glyphs[idx];
 
         // Glyphs are already scaled to scale_factor in the texture cache, don'te rescale here.
         let surface_width_px = self.size.width as f32;
         let surface_height_px = self.size.height as f32;
 
-        let uv_bounds = &self.glyph_cache.cached_uv_bounds[idx];
-
-        let px_bounds = &self.glyph_cache.cached_px_bounds[idx];
+        let uv_bounds = &glyph_data.uv_bounds;
+        let px_bounds = &glyph_data.px_bounds;
 
         let left = x + px_bounds.min.x / surface_width_px;
         let right = x + px_bounds.max.x / surface_width_px;
@@ -323,10 +322,12 @@ impl GfxState {
                 depth_stencil_attachment: None,
             });
 
+            self.glyph_cache.queue_write_texture_if_changed(&self.queue);
+
             let mut vertices = self
                 .get_vertices_for_char(
                     'a',
-                    ab_glyph::PxScale::from(128.0),
+                    GlyphPxScale::from(128.0),
                     (256.0 / (self.size.width as f32 / self.scale_factor as f32)) - 1.0,
                     1.0 - (256.0 / (self.size.height as f32 / self.scale_factor as f32)),
                 )
@@ -335,7 +336,7 @@ impl GfxState {
                 &mut self
                     .get_vertices_for_char(
                         'b',
-                        ab_glyph::PxScale::from(128.0),
+                        GlyphPxScale::from(128.0),
                         (256.0 / (self.size.width as f32 / self.scale_factor as f32)) - 1.0
                             + 256.0 / (self.size.width as f32 / self.scale_factor as f32),
                         1.0 - (256.0 / (self.size.height as f32 / self.scale_factor as f32)),
