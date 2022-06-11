@@ -91,7 +91,7 @@ impl GfxState {
         });
 
         let mut glyph_cache =
-            GlyphCache::new(&device, &queue, ab_glyph::PxScale::from(64.0), scale_factor);
+            GlyphCache::new(&device, &queue, GlyphPxScale::from(64.0), scale_factor);
 
         /*let glyph_cache_texture_bind_group_layout =
             device.create_bind_group_layout(&GlyphCache::texture_bind_group_layout_desc());
@@ -164,8 +164,8 @@ impl GfxState {
             mapped_at_creation: false,
         });
 
-        glyph_cache.prepare_cache_glyph('a', ab_glyph::PxScale::from(128.0));
-        glyph_cache.prepare_cache_glyph('b', ab_glyph::PxScale::from(128.0));
+        glyph_cache.prepare_cache_glyph('a', GlyphPxScale::from(128.0));
+        glyph_cache.prepare_cache_glyph('b', GlyphPxScale::from(128.0));
 
         GfxState {
             surface,
@@ -245,11 +245,8 @@ impl GfxState {
 
         let left = x + px_bounds.min.x / surface_width_px;
         let right = x + px_bounds.max.x / surface_width_px;
-        // ab_glyph assumes opengl coordinates (0, 0 top left),
-        // but wgpu uses DX11/Metal coordinates (0, 0 center),
-        // so y axis needs to subtract bounds, not add
-        let top = baseline_y - px_bounds.min.y / surface_height_px;
-        let bottom = baseline_y - px_bounds.max.y / surface_height_px;
+        let top = baseline_y + px_bounds.min.y / surface_height_px;
+        let bottom = baseline_y + px_bounds.max.y / surface_height_px;
 
         Ok(vec![
             Vertex {

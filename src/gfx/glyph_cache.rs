@@ -8,14 +8,17 @@ pub struct GlyphPxBounds {
 
 impl From<ab_glyph::Rect> for GlyphPxBounds {
     fn from(rect: ab_glyph::Rect) -> Self {
+        // ab_glyph assumes opengl coordinates (0, 0 top left),
+        // but wgpu uses DX11/Metal coordinates (0, 0 center),
+        // so y axis needs to invert bounds
         Self {
             min: cgmath::Point2 {
                 x: rect.min.x,
-                y: rect.min.y,
+                y: -rect.min.y,
             },
             max: cgmath::Point2 {
                 x: rect.max.x,
-                y: rect.max.y,
+                y: -rect.max.y,
             },
         }
     }
@@ -32,6 +35,15 @@ impl GlyphPxScale {
         Self {
             x: uniform_scale,
             y: uniform_scale,
+        }
+    }
+}
+
+impl GlyphPxScale {
+    fn to_ab_glyph_px_scale(&self) -> ab_glyph::PxScale {
+        ab_glyph::PxScale {
+            x: self.x,
+            y: self.y,
         }
     }
 }
@@ -104,7 +116,7 @@ impl GlyphCache {
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        initial_px_scale: ab_glyph::PxScale,
+        initial_px_scale: GlyphPxScale,
         window_scale_factor: f32,
     ) -> Self {
         let label = Some("glyph_cache_texture");
@@ -119,10 +131,6 @@ impl GlyphCache {
             ab_glyph::FontVec::try_from_vec_and_index(font_data, 0).expect("Unable to load font.");
 
         let cached_glyphs: Vec<GlyphData> = Vec::new();
-
-        /*let cached_chars: Vec<(char, ab_glyph::PxScale)> = Vec::new();
-        let cached_uv_bounds: Vec<GlyphUvBounds> = Vec::new();
-        let cached_px_bounds: Vec<GlyphPxBounds> = Vec::new();*/
 
         let base_row_size = px_scale.x.ceil() as usize * 32;
         let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as usize;
@@ -277,8 +285,11 @@ impl GlyphCache {
         }
     }
 
-    pub fn prepare_cache_glyph(&mut self, character: char, px_scale: ab_glyph::PxScale) {
-        let glyph = self.font.glyph_id(character).with_scale(px_scale);
+    pub fn prepare_cache_glyph(&mut self, character: char, px_scale: GlyphPxScale) {
+        let glyph = self
+            .font
+            .glyph_id(character)
+            .with_scale(px_scale.to_ab_glyph_px_scale());
         if let Some(g) = self.font.outline_glyph(glyph) {
             let px_bounds = g.px_bounds();
             let px_width = px_bounds.max.x - px_bounds.min.x;
@@ -306,15 +317,6 @@ impl GlyphCache {
                     texture_offset_v + px_height / self.texture_rows as f32,
                 ),
             };
-
-            /*self.cached_chars.push((character, px_scale));
-            self.cached_px_bounds.push(px_bounds.into());
-            self.cached_uv_bounds.push(GlyphUvBounds::new(
-                texture_offset_u,
-                texture_offset_u + px_width / self.texture_row_size as f32,
-                texture_offset_v,
-                texture_offset_v + px_height / self.texture_rows as f32,
-            ));*/
 
             self.cached_glyphs.push(glyph_data);
 
