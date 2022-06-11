@@ -94,9 +94,15 @@ pub struct GlyphData {
     pub uv_bounds: GlyphUvBounds,
 }
 
+#[derive(Debug)]
+pub struct FontData {
+    path: std::path::PathBuf,
+    name: String,
+    font: ab_glyph::FontVec,
+}
+
 pub struct GlyphCache {
-    pub font_path: std::path::PathBuf,
-    pub font: ab_glyph::FontVec,
+    pub cached_fonts: Vec<FontData>,
     pub cached_glyphs: Vec<GlyphData>,
     texture_row_size: usize,
     texture_rows: usize,
@@ -126,9 +132,24 @@ impl GlyphCache {
         };
 
         let font_path = std::path::PathBuf::from("./fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
-        let font_data = std::fs::read(&font_path).expect("Unable to read font file.");
+        let font_name = font_path
+            .file_stem()
+            .expect("Unable to extract file stem from font_path")
+            .to_str()
+            .unwrap()
+            .to_string();
+        let font_bytes = std::fs::read(&font_path).expect("Unable to read font file.");
         let font =
-            ab_glyph::FontVec::try_from_vec_and_index(font_data, 0).expect("Unable to load font.");
+            ab_glyph::FontVec::try_from_vec_and_index(font_bytes, 0).expect("Unable to load font.");
+
+        let font_data = FontData {
+            path: font_path,
+            name: font_name,
+            font,
+        };
+
+        let mut cached_fonts: Vec<FontData> = Vec::new();
+        cached_fonts.push(font_data);
 
         let cached_glyphs: Vec<GlyphData> = Vec::new();
 
@@ -238,8 +259,7 @@ impl GlyphCache {
         });
 
         Self {
-            font_path,
-            font,
+            cached_fonts,
             cached_glyphs,
             current_px_offset: cgmath::Point2 {
                 x: current_pixel_offset_x,
@@ -286,11 +306,11 @@ impl GlyphCache {
     }
 
     pub fn prepare_cache_glyph(&mut self, character: char, px_scale: GlyphPxScale) {
-        let glyph = self
-            .font
+        let font = &self.cached_fonts[0].font;
+        let glyph = font
             .glyph_id(character)
             .with_scale(px_scale.to_ab_glyph_px_scale());
-        if let Some(g) = self.font.outline_glyph(glyph) {
+        if let Some(g) = font.outline_glyph(glyph) {
             let px_bounds = g.px_bounds();
             let px_width = px_bounds.max.x - px_bounds.min.x;
             let px_height = px_bounds.max.y - px_bounds.min.y;
