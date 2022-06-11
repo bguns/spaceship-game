@@ -53,9 +53,9 @@ pub struct GlyphBounds {
     pub uv_bounds: GlyphUvBounds,
 }
 
-pub struct GlyphCache<'a> {
+pub struct GlyphCache {
     pub font_path: std::path::PathBuf,
-    pub font: ab_glyph::FontRef<'a>,
+    pub font: ab_glyph::FontVec,
     pub cached_chars: Vec<(char, ab_glyph::PxScale)>,
     pub cached_px_bounds: Vec<GlyphPxBounds>,
     pub cached_uv_bounds: Vec<GlyphUvBounds>,
@@ -72,7 +72,7 @@ pub struct GlyphCache<'a> {
     pub texture_bind_group: wgpu::BindGroup,
 }
 
-impl<'a> GlyphCache<'a> {
+impl GlyphCache {
     pub fn new(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -85,9 +85,10 @@ impl<'a> GlyphCache<'a> {
             y: initial_px_scale.y * window_scale_factor,
         };
 
-        let font_path = std::path::PathBuf::from("../fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
-        let font_data = include_bytes!("../../fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
-        let font = ab_glyph::FontRef::try_from_slice(font_data).expect("Unable to load font.");
+        let font_path = std::path::PathBuf::from("./fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
+        let font_data = std::fs::read(&font_path).expect("Unable to read font file.");
+        let font =
+            ab_glyph::FontVec::try_from_vec_and_index(font_data, 0).expect("Unable to load font.");
 
         let cached_chars: Vec<(char, ab_glyph::PxScale)> = Vec::new();
         let cached_uv_bounds: Vec<GlyphUvBounds> = Vec::new();

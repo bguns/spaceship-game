@@ -34,7 +34,7 @@ impl Vertex {
     }
 }
 
-pub struct GfxState<'a> {
+pub struct GfxState {
     surface: wgpu::Surface,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -42,7 +42,7 @@ pub struct GfxState<'a> {
     size: winit::dpi::PhysicalSize<u32>,
     scale_factor: f32,
     render_pipeline: wgpu::RenderPipeline,
-    glyph_cache: GlyphCache<'a>,
+    glyph_cache: GlyphCache,
     glyph_vertex_buffer: wgpu::Buffer,
 }
 
@@ -54,7 +54,7 @@ pub const _OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
     0.0, 0.0, 0.5, 1.0,
 );
 
-impl<'a> GfxState<'a> {
+impl GfxState {
     pub fn new(window: &Window) -> Self {
         let size = window.inner_size();
         let scale_factor = window.scale_factor() as f32;
