@@ -90,8 +90,7 @@ impl GfxState {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let mut glyph_cache =
-            GlyphCache::new(&device, &queue, GlyphPxScale::from(64.0), scale_factor);
+        let mut glyph_cache = GlyphCache::new(&device, GlyphPxScale::from(64.0), scale_factor);
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

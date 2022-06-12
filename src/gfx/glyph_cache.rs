@@ -122,7 +122,6 @@ pub struct GlyphCache {
 impl GlyphCache {
     pub fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
         initial_px_scale: GlyphPxScale,
         window_scale_factor: f32,
     ) -> Self {
