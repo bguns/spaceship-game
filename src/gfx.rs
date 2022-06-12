@@ -93,24 +93,6 @@ impl GfxState {
         let mut glyph_cache =
             GlyphCache::new(&device, &queue, GlyphPxScale::from(64.0), scale_factor);
 
-        /*let glyph_cache_texture_bind_group_layout =
-            device.create_bind_group_layout(&GlyphCache::texture_bind_group_layout_desc());
-
-        let glyph_cache_texture_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("glyph_cache_texture_bind_group"),
-            layout: &glyph_cache_texture_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&glyph_cache.view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&glyph_cache.sampler),
-                },
-            ],
-        });*/
-
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
@@ -164,8 +146,11 @@ impl GfxState {
             mapped_at_creation: false,
         });
 
-        glyph_cache.prepare_cache_glyph('a', GlyphPxScale::from(128.0));
-        glyph_cache.prepare_cache_glyph('b', GlyphPxScale::from(128.0));
+        let font_path_1 = std::path::PathBuf::from("./fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
+        let _ = glyph_cache.cache_font(font_path_1);
+
+        let font_path_2 = std::path::PathBuf::from("./fonts/westwood-studio/Westwood Studio.ttf");
+        let _ = glyph_cache.cache_font(font_path_2);
 
         GfxState {
             surface,
@@ -221,20 +206,16 @@ impl GfxState {
     }
 
     pub fn get_vertices_for_char(
-        &self,
+        &mut self,
+        font_idx: usize,
         character: char,
         px_scale: GlyphPxScale,
         x: f32,
         baseline_y: f32,
     ) -> Result<Vec<Vertex>> {
-        let idx = self
+        let glyph_data = &self
             .glyph_cache
-            .cached_glyphs
-            .iter()
-            .position(|g| g.character == character && g.px_scale == px_scale)
-            .unwrap();
-
-        let glyph_data = &self.glyph_cache.cached_glyphs[idx];
+            .get_cached_glyph_data(font_idx, character, px_scale);
 
         // Glyphs are already scaled to scale_factor in the texture cache, don'te rescale here.
         let surface_width_px = self.size.width as f32;
@@ -321,25 +302,45 @@ impl GfxState {
 
             self.glyph_cache.queue_write_texture_if_changed(&self.queue);
 
+            let scaled_width = self.size.width as f32 / self.scale_factor as f32;
+            let scaled_height = self.size.height as f32 / self.scale_factor as f32;
+
             let mut vertices = self
                 .get_vertices_for_char(
+                    0,
                     'a',
                     GlyphPxScale::from(128.0),
-                    (256.0 / (self.size.width as f32 / self.scale_factor as f32)) - 1.0,
-                    1.0 - (256.0 / (self.size.height as f32 / self.scale_factor as f32)),
+                    (256.0 / scaled_width) - 1.0,
+                    1.0 - (256.0 / scaled_height),
                 )
                 .unwrap();
             vertices.append(
                 &mut self
                     .get_vertices_for_char(
+                        0,
                         'b',
                         GlyphPxScale::from(128.0),
-                        (256.0 / (self.size.width as f32 / self.scale_factor as f32)) - 1.0
-                            + 256.0 / (self.size.width as f32 / self.scale_factor as f32),
-                        1.0 - (256.0 / (self.size.height as f32 / self.scale_factor as f32)),
+                        (256.0 / scaled_width) - 1.0 + 256.0 / scaled_width,
+                        1.0 - (256.0 / scaled_height),
                     )
                     .unwrap(),
             );
+
+            if let Some(txt) = text {
+                for (i, c) in txt.chars().enumerate() {
+                    vertices.append(
+                        &mut self
+                            .get_vertices_for_char(
+                                1,
+                                c,
+                                GlyphPxScale::from(128.0),
+                                (256.0 / scaled_width) - 1.0 + (196.0 / scaled_width) * i as f32,
+                                1.0 - (512.0 / scaled_height),
+                            )
+                            .unwrap(),
+                    )
+                }
+            }
 
             self.queue.write_buffer(
                 &self.glyph_vertex_buffer,
