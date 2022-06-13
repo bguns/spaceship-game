@@ -1,38 +1,12 @@
 mod glyph_cache;
+mod vertex;
 
 use pollster::FutureExt as _;
 use winit::window::Window;
 
 use crate::error::Result;
 use glyph_cache::{GlyphCache, GlyphPxScale};
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Vertex {
-    position: [f32; 3],
-    tex_coords: [f32; 2],
-}
-
-impl Vertex {
-    fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 0,
-                    shader_location: 0,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                },
-            ],
-        }
-    }
-}
+use vertex::Vertex;
 
 pub struct GfxState {
     surface: wgpu::Surface,
@@ -204,7 +178,7 @@ impl GfxState {
         }
     }
 
-    pub fn get_vertices_for_char(
+    /*pub fn get_vertices_for_char(
         &mut self,
         font_idx: usize,
         character: char,
@@ -254,7 +228,7 @@ impl GfxState {
                 tex_coords: [uv_bounds.left(), uv_bounds.top()],
             },
         ])
-    }
+    }*/
 
     pub fn render(&mut self, text: Option<&str>) -> Result<()> {
         // Get SurfaceTexture
@@ -304,40 +278,36 @@ impl GfxState {
             let scaled_width = self.size.width as f32 / self.scale_factor as f32;
             let scaled_height = self.size.height as f32 / self.scale_factor as f32;
 
-            let mut vertices = self
-                .get_vertices_for_char(
-                    0,
-                    'a',
-                    GlyphPxScale::from(128.0),
-                    (256.0 / scaled_width) - 1.0,
-                    1.0 - (256.0 / scaled_height),
-                )
-                .unwrap();
-            vertices.append(
-                &mut self
-                    .get_vertices_for_char(
-                        0,
-                        'b',
-                        GlyphPxScale::from(128.0),
-                        (256.0 / scaled_width) - 1.0 + 256.0 / scaled_width,
-                        1.0 - (256.0 / scaled_height),
-                    )
-                    .unwrap(),
+            let mut vertices = self.glyph_cache.get_vertices_for_glyph(
+                0,
+                'a',
+                GlyphPxScale::from(128.0),
+                (256.0 / scaled_width) - 1.0,
+                1.0 - (256.0 / scaled_height),
+                self.size.width,
+                self.size.height,
             );
+            vertices.append(&mut self.glyph_cache.get_vertices_for_glyph(
+                0,
+                'b',
+                GlyphPxScale::from(128.0),
+                (256.0 / scaled_width) - 1.0 + 256.0 / scaled_width,
+                1.0 - (256.0 / scaled_height),
+                self.size.width,
+                self.size.height,
+            ));
 
             if let Some(txt) = text {
                 for (i, c) in txt.chars().enumerate() {
-                    vertices.append(
-                        &mut self
-                            .get_vertices_for_char(
-                                1,
-                                c,
-                                GlyphPxScale::from(128.0),
-                                (256.0 / scaled_width) - 1.0 + (196.0 / scaled_width) * i as f32,
-                                1.0 - (512.0 / scaled_height),
-                            )
-                            .unwrap(),
-                    )
+                    vertices.append(&mut self.glyph_cache.get_vertices_for_glyph(
+                        0,
+                        c,
+                        GlyphPxScale::from(128.0),
+                        (256.0 / scaled_width) - 1.0 + (196.0 / scaled_width) * i as f32,
+                        1.0 - (512.0 / scaled_height),
+                        self.size.width,
+                        self.size.height,
+                    ))
                 }
             }
 

@@ -1,3 +1,4 @@
+use super::vertex::Vertex;
 use ab_glyph::Font;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -257,6 +258,58 @@ impl GlyphCache {
             self.cached_fonts.push(font_data);
             self.cached_fonts.len() - 1
         }
+    }
+
+    pub fn get_vertices_for_glyph(
+        &mut self,
+        font_idx: usize,
+        character: char,
+        px_scale: GlyphPxScale,
+        caret_x: f32,
+        caret_y: f32,
+        screen_width: u32,
+        screen_height: u32,
+    ) -> Vec<Vertex> {
+        let glyph_data = &self.get_cached_glyph_data(font_idx, character, px_scale);
+
+        // Glyphs are already scaled to scale_factor in the texture cache, don'te rescale here.
+        let surface_width_px = screen_width as f32;
+        let surface_height_px = screen_height as f32;
+
+        let uv_bounds = &glyph_data.uv_bounds;
+        let px_bounds = &glyph_data.px_bounds;
+
+        let left = caret_x + px_bounds.min.x / surface_width_px;
+        let right = caret_x + px_bounds.max.x / surface_width_px;
+        let top = caret_y + px_bounds.min.y / surface_height_px;
+        let bottom = caret_y + px_bounds.max.y / surface_height_px;
+
+        vec![
+            Vertex {
+                position: [left, top, 0.0],
+                tex_coords: [uv_bounds.left(), uv_bounds.top()],
+            },
+            Vertex {
+                position: [left, bottom, 0.0],
+                tex_coords: [uv_bounds.left(), uv_bounds.bottom()],
+            },
+            Vertex {
+                position: [right, bottom, 0.0],
+                tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
+            },
+            Vertex {
+                position: [right, bottom, 0.0],
+                tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
+            },
+            Vertex {
+                position: [right, top, 0.0],
+                tex_coords: [uv_bounds.right(), uv_bounds.top()],
+            },
+            Vertex {
+                position: [left, top, 0.0],
+                tex_coords: [uv_bounds.left(), uv_bounds.top()],
+            },
+        ]
     }
 
     fn get_font_id_for_font_path(&self, font_path: &std::path::PathBuf) -> Option<usize> {
