@@ -1,6 +1,7 @@
 mod glyph_cache;
 mod vertex;
 
+use ab_glyph::ScaleFont;
 use pollster::FutureExt as _;
 use winit::window::Window;
 
@@ -260,9 +261,9 @@ impl GfxState {
                         ops: wgpu::Operations {
                             // Load tells wgpu how to handle colors stored from the previous frame (we clear the screen)
                             load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 25.0 / 255.0,
-                                g: 25.0 / 255.0,
-                                b: 25.0 / 255.0,
+                                r: 10.0 / 255.0,
+                                g: 10.0 / 255.0,
+                                b: 10.0 / 255.0,
                                 a: 1.0,
                             }),
                             // We want to store the rendered results to the (Surface)Texture behind the TextureView (the view)
@@ -278,38 +279,116 @@ impl GfxState {
             let scaled_width = self.size.width as f32 / self.scale_factor as f32;
             let scaled_height = self.size.height as f32 / self.scale_factor as f32;
 
-            let mut vertices = self.glyph_cache.get_vertices_for_glyph(
+            self.glyph_cache.ensure_glyph_cached(
                 0,
                 'a',
                 GlyphPxScale::from(128.0 * self.scale_factor as f32),
+            );
+            self.glyph_cache.ensure_glyph_cached(
+                0,
+                'b',
+                GlyphPxScale::from(128.0 * self.scale_factor as f32),
+            );
+
+            let a_glyph = self
+                .glyph_cache
+                .try_get_cached_glyph_data(
+                    0,
+                    'a',
+                    GlyphPxScale::from(128.0 * self.scale_factor as f32),
+                )
+                .unwrap();
+
+            let b_glyph = self
+                .glyph_cache
+                .try_get_cached_glyph_data(
+                    0,
+                    'b',
+                    GlyphPxScale::from(128.0 * self.scale_factor as f32),
+                )
+                .unwrap();
+
+            let mut vertices = self.glyph_cache.get_vertices_for_glyph(
+                a_glyph,
                 (256.0 / scaled_width) - 1.0,
                 1.0 - (256.0 / scaled_height),
                 self.size.width,
                 self.size.height,
             );
             vertices.append(&mut self.glyph_cache.get_vertices_for_glyph(
-                0,
-                'b',
-                GlyphPxScale::from(128.0 * self.scale_factor as f32),
+                b_glyph,
                 (256.0 / scaled_width) - 1.0 + 256.0 / scaled_width,
                 1.0 - (256.0 / scaled_height),
                 self.size.width,
                 self.size.height,
             ));
 
+            let px_scale = GlyphPxScale::from(128.0 * self.scale_factor as f32);
+
             if let Some(txt) = text {
-                for (i, c) in txt.chars().enumerate() {
-                    vertices.append(&mut self.glyph_cache.get_vertices_for_glyph(
-                        0,
+                for c in txt.chars() {
+                    self.glyph_cache.ensure_glyph_cached(
+                        1,
                         c,
                         GlyphPxScale::from(128.0 * self.scale_factor as f32),
-                        (256.0 / scaled_width) - 1.0 + (196.0 / scaled_width) * i as f32,
-                        1.0 - (512.0 / scaled_height),
-                        self.size.width,
-                        self.size.height,
-                    ))
+                    );
+                }
+                let scaled_font = self
+                    .glyph_cache
+                    .try_get_cached_font_with_scale(1, px_scale)
+                    .unwrap();
+                let mut previous_char: Option<char> = None;
+                let mut caret_x = (256.0 / scaled_width) - 1.0;
+                for c in txt.chars() {
+                    if let Some(glyph_data) =
+                        self.glyph_cache.try_get_cached_glyph_data(1, c, px_scale)
+                    {
+                        if let Some(prev) = previous_char {
+                            caret_x += scaled_font
+                                .kern(scaled_font.glyph_id(prev), scaled_font.glyph_id(c))
+                                / scaled_width;
+                        }
+                        vertices.append(&mut self.glyph_cache.get_vertices_for_glyph(
+                            glyph_data,
+                            caret_x,
+                            1.0 - (512.0 / scaled_height),
+                            self.size.width,
+                            self.size.height,
+                        ));
+                        caret_x += scaled_font.h_advance(scaled_font.glyph_id(c)) / scaled_width;
+                        previous_char = Some(c);
+                    } else {
+                        caret_x += scaled_font.h_advance(scaled_font.glyph_id(' ')) / scaled_width;
+                    }
                 }
             }
+
+            vertices.append(&mut vec![
+                Vertex {
+                    position: [0.0, 0.0, 0.0],
+                    tex_coords: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [0.0, -1.0, 0.0],
+                    tex_coords: [0.0, 1.0],
+                },
+                Vertex {
+                    position: [1.0, -1.0, 0.0],
+                    tex_coords: [1.0, 1.0],
+                },
+                Vertex {
+                    position: [1.0, -1.0, 0.0],
+                    tex_coords: [1.0, 1.0],
+                },
+                Vertex {
+                    position: [1.0, 0.0, 0.0],
+                    tex_coords: [1.0, 0.0],
+                },
+                Vertex {
+                    position: [0.0, 0.0, 0.0],
+                    tex_coords: [0.0, 0.0],
+                },
+            ]);
 
             self.queue.write_buffer(
                 &self.glyph_vertex_buffer,

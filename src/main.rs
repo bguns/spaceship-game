@@ -97,7 +97,8 @@ fn main() -> Result<()> {
                 *control_flow = ControlFlow::WaitUntil(previous_frame_start + sixteen_millis)
             } else {
                 game_state.update(now).unwrap();
-                match gfx_state.render(Some("Welcome!")) {
+                let slice_end = std::cmp::min("Arrrrrrrrrrrrriverderci!".len(), (game_state.frame_number / 2) as usize);
+                match gfx_state.render(Some(&"Arrrrrrrrrrrrriverderci!"[0..slice_end])) {
                     Ok(_) => {}
                     // Reconfigure the surface if lost
                     Err(GameError::WgpuError(wgpu::SurfaceError::Lost)) => gfx_state.resize(None),

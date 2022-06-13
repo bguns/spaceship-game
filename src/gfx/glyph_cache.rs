@@ -89,11 +89,11 @@ impl GlyphUvBounds {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlyphData {
-    pub character: char,
+    character: char,
     font_idx: usize,
-    pub px_scale: GlyphPxScale,
-    pub px_bounds: GlyphPxBounds,
-    pub uv_bounds: GlyphUvBounds,
+    px_scale: GlyphPxScale,
+    px_bounds: GlyphPxBounds,
+    uv_bounds: GlyphUvBounds,
 }
 
 #[derive(Debug)]
@@ -261,23 +261,19 @@ impl GlyphCache {
     }
 
     pub fn get_vertices_for_glyph(
-        &mut self,
-        font_idx: usize,
-        character: char,
-        px_scale: GlyphPxScale,
+        &self,
+        glyph: &GlyphData,
         caret_x: f32,
         caret_y: f32,
         screen_width: u32,
         screen_height: u32,
     ) -> Vec<Vertex> {
-        let glyph_data = &self.get_cached_glyph_data(font_idx, character, px_scale);
-
         // Glyphs are already scaled to scale_factor in the texture cache, don'te rescale here.
         let surface_width_px = screen_width as f32;
         let surface_height_px = screen_height as f32;
 
-        let uv_bounds = &glyph_data.uv_bounds;
-        let px_bounds = &glyph_data.px_bounds;
+        let uv_bounds = glyph.uv_bounds;
+        let px_bounds = glyph.px_bounds;
 
         let left = caret_x + px_bounds.min.x / surface_width_px;
         let right = caret_x + px_bounds.max.x / surface_width_px;
@@ -321,7 +317,7 @@ impl GlyphCache {
         None
     }
 
-    fn get_font_id_for_font_name(&self, font_name: &str) -> Option<usize> {
+    fn _get_font_id_for_font_name(&self, font_name: &str) -> Option<usize> {
         for (idx, font) in self.cached_fonts.iter().enumerate() {
             if &font.name == font_name {
                 return Some(idx);
@@ -330,20 +326,19 @@ impl GlyphCache {
         None
     }
 
-    pub fn get_cached_glyph_data(
-        &mut self,
+    pub fn try_get_cached_font_with_scale(
+        &self,
         font_idx: usize,
-        character: char,
         px_scale: GlyphPxScale,
-    ) -> &GlyphData {
-        self.ensure_glyph_cached(font_idx, character, px_scale);
-        self.find_cached_glyph_data(font_idx, character, px_scale)
-        .expect(&format!(
-            "Could not find glyph data after glyph shoud have been cachers. font_idx {} (font_name: {}), character '{}' and px_scale: {:?}", 
-            font_idx, self.cached_fonts[font_idx].name, character, px_scale))
+    ) -> Option<ab_glyph::PxScaleFont<&ab_glyph::FontVec>> {
+        if let Some(font_data) = self.cached_fonts.get(font_idx) {
+            Some(font_data.font.as_scaled(px_scale.to_ab_glyph_px_scale()))
+        } else {
+            None
+        }
     }
 
-    fn find_cached_glyph_data(
+    pub fn try_get_cached_glyph_data(
         &self,
         font_idx: usize,
         character: char,
@@ -392,7 +387,7 @@ impl GlyphCache {
         character: char,
         px_scale: GlyphPxScale,
     ) {
-        if let None = self.find_cached_glyph_data(font_idx, character, px_scale) {
+        if let None = self.try_get_cached_glyph_data(font_idx, character, px_scale) {
             let font = &self.cached_fonts[font_idx].font;
             let glyph = font
                 .glyph_id(character)
