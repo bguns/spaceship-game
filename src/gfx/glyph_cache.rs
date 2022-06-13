@@ -269,12 +269,13 @@ impl GlyphCache {
         caret_y: f32,
         screen_width: u32,
         screen_height: u32,
+        scale_factor: f32,
     ) -> Vec<Vertex> {
         let glyph_data = &self.get_cached_glyph_data(font_idx, character, px_scale);
 
         // Glyphs are already scaled to scale_factor in the texture cache, don'te rescale here.
-        let surface_width_px = screen_width as f32;
-        let surface_height_px = screen_height as f32;
+        let surface_width_px = screen_width as f32 / scale_factor;
+        let surface_height_px = screen_height as f32 / scale_factor;
 
         let uv_bounds = &glyph_data.uv_bounds;
         let px_bounds = &glyph_data.px_bounds;

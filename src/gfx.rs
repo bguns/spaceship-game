@@ -286,6 +286,7 @@ impl GfxState {
                 1.0 - (256.0 / scaled_height),
                 self.size.width,
                 self.size.height,
+                self.scale_factor as f32,
             );
             vertices.append(&mut self.glyph_cache.get_vertices_for_glyph(
                 0,
@@ -295,6 +296,7 @@ impl GfxState {
                 1.0 - (256.0 / scaled_height),
                 self.size.width,
                 self.size.height,
+                self.scale_factor as f32,
             ));
 
             if let Some(txt) = text {
@@ -307,6 +309,7 @@ impl GfxState {
                         1.0 - (512.0 / scaled_height),
                         self.size.width,
                         self.size.height,
+                        self.scale_factor as f32,
                     ))
                 }
             }
