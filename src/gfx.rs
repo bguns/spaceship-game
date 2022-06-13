@@ -281,22 +281,20 @@ impl GfxState {
             let mut vertices = self.glyph_cache.get_vertices_for_glyph(
                 0,
                 'a',
-                GlyphPxScale::from(128.0),
+                GlyphPxScale::from(128.0 * self.scale_factor as f32),
                 (256.0 / scaled_width) - 1.0,
                 1.0 - (256.0 / scaled_height),
                 self.size.width,
                 self.size.height,
-                self.scale_factor as f32,
             );
             vertices.append(&mut self.glyph_cache.get_vertices_for_glyph(
                 0,
                 'b',
-                GlyphPxScale::from(128.0),
+                GlyphPxScale::from(128.0 * self.scale_factor as f32),
                 (256.0 / scaled_width) - 1.0 + 256.0 / scaled_width,
                 1.0 - (256.0 / scaled_height),
                 self.size.width,
                 self.size.height,
-                self.scale_factor as f32,
             ));
 
             if let Some(txt) = text {
@@ -304,12 +302,11 @@ impl GfxState {
                     vertices.append(&mut self.glyph_cache.get_vertices_for_glyph(
                         0,
                         c,
-                        GlyphPxScale::from(128.0),
+                        GlyphPxScale::from(128.0 * self.scale_factor as f32),
                         (256.0 / scaled_width) - 1.0 + (196.0 / scaled_width) * i as f32,
                         1.0 - (512.0 / scaled_height),
                         self.size.width,
                         self.size.height,
-                        self.scale_factor as f32,
                     ))
                 }
             }
