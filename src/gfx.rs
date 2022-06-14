@@ -346,7 +346,7 @@ impl GfxState {
                         if let Some(prev) = previous_char {
                             caret_x += scaled_font
                                 .kern(scaled_font.glyph_id(prev), scaled_font.glyph_id(c))
-                                / scaled_width;
+                                / self.size.width as f32;
                         }
                         vertices.append(&mut self.glyph_cache.get_vertices_for_glyph(
                             glyph_data,
@@ -355,10 +355,12 @@ impl GfxState {
                             self.size.width,
                             self.size.height,
                         ));
-                        caret_x += scaled_font.h_advance(scaled_font.glyph_id(c)) / scaled_width;
+                        caret_x +=
+                            scaled_font.h_advance(scaled_font.glyph_id(c)) / self.size.width as f32;
                         previous_char = Some(c);
                     } else {
-                        caret_x += scaled_font.h_advance(scaled_font.glyph_id(' ')) / scaled_width;
+                        caret_x += scaled_font.h_advance(scaled_font.glyph_id(' '))
+                            / self.size.width as f32;
                     }
                 }
             }
