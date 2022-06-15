@@ -88,6 +88,12 @@ pub struct GlyphData {
     uv_bounds: GlyphUvBounds,
 }
 
+impl GlyphData {
+    pub fn px_scale(&self) -> &GlyphPxScale {
+        &self.px_scale
+    }
+}
+
 #[derive(Debug)]
 pub struct FontData {
     path: std::path::PathBuf,
@@ -96,6 +102,8 @@ pub struct FontData {
 }
 
 pub struct GlyphCache {
+    surface_width: u32,
+    surface_height: u32,
     screen_scale_factor: f32,
     pub cached_fonts: Vec<FontData>,
     pub cached_glyphs: Vec<GlyphData>,
@@ -114,7 +122,12 @@ pub struct GlyphCache {
 }
 
 impl GlyphCache {
-    pub fn new(device: &wgpu::Device, screen_scale_factor: f32) -> Self {
+    pub fn new(
+        device: &wgpu::Device,
+        surface_width: u32,
+        surface_height: u32,
+        screen_scale_factor: f32,
+    ) -> Self {
         let label = Some("glyph_cache_texture");
         let px_scale = ab_glyph::PxScale {
             x: 64.0 * screen_scale_factor,
@@ -208,6 +221,8 @@ impl GlyphCache {
         });
 
         Self {
+            surface_width,
+            surface_height,
             screen_scale_factor,
             cached_fonts,
             cached_glyphs,
@@ -224,6 +239,11 @@ impl GlyphCache {
             texture_bind_group_layout,
             texture_bind_group,
         }
+    }
+
+    pub fn surface_resized(&mut self, surface_width: u32, surface_height: u32) {
+        self.surface_width = surface_width;
+        self.surface_height = surface_height;
     }
 
     pub fn glyph_px_scale(&self, uniform_scale: f32) -> GlyphPxScale {
@@ -263,12 +283,10 @@ impl GlyphCache {
         glyph: &GlyphData,
         caret_x: f32,
         caret_y: f32,
-        screen_width: u32,
-        screen_height: u32,
     ) -> Vec<Vertex> {
         // Glyphs are already scaled to scale_factor in the texture cache, don'te rescale here.
-        let surface_width_px = screen_width as f32;
-        let surface_height_px = screen_height as f32;
+        let surface_width_px = self.surface_width as f32;
+        let surface_height_px = self.surface_height as f32;
 
         let uv_bounds = glyph.uv_bounds;
         let px_bounds = glyph.px_bounds;

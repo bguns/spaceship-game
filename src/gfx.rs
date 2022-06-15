@@ -15,7 +15,7 @@ pub struct GfxState {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
-    scale_factor: f32,
+    screen_scale_factor: f32,
     render_pipeline: wgpu::RenderPipeline,
     glyph_cache: GlyphCache,
     glyph_vertex_buffer: wgpu::Buffer,
@@ -32,7 +32,7 @@ pub const _OPENGL_TO_WGPU_MATRIX: cgmath::Matrix4<f32> = cgmath::Matrix4::new(
 impl GfxState {
     pub fn new(window: &Window) -> Self {
         let size = window.inner_size();
-        let scale_factor = window.scale_factor() as f32;
+        let screen_scale_factor = window.scale_factor() as f32;
 
         // The instance's main purpose is to create Adapters and Surfaces
         // Backends::all => Vulkan + Metal + DX12 + Browser WebGPU
@@ -65,7 +65,8 @@ impl GfxState {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let mut glyph_cache = GlyphCache::new(&device, scale_factor);
+        let mut glyph_cache =
+            GlyphCache::new(&device, size.width, size.height, screen_scale_factor);
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -132,7 +133,7 @@ impl GfxState {
             queue,
             config,
             size,
-            scale_factor,
+            screen_scale_factor,
             render_pipeline,
             glyph_cache,
             glyph_vertex_buffer,
@@ -176,6 +177,8 @@ impl GfxState {
             self.config.width = new_size_apply.width;
             self.config.height = new_size_apply.height;
             self.surface.configure(&self.device, &self.config);
+            self.glyph_cache
+                .surface_resized(new_size_apply.width, new_size_apply.height);
         }
     }
 
@@ -226,9 +229,6 @@ impl GfxState {
 
             self.glyph_cache.queue_write_texture_if_changed(&self.queue);
 
-            let scaled_width = self.size.width as f32 / self.scale_factor as f32;
-            let scaled_height = self.size.height as f32 / self.scale_factor as f32;
-
             self.glyph_cache.ensure_glyph_cached(0, 'a', px_scale);
             self.glyph_cache.ensure_glyph_cached(0, 'b', px_scale);
 
@@ -242,19 +242,14 @@ impl GfxState {
                 .try_get_cached_glyph_data(0, 'b', px_scale)
                 .unwrap();
 
-            let mut vertices = self.glyph_cache.get_vertices_for_glyph(
-                a_glyph,
-                (256.0 / scaled_width) - 1.0,
-                1.0 - (256.0 / scaled_height),
-                self.size.width,
-                self.size.height,
-            );
+            let mut vertices = self.glyph_cache.get_vertices_for_glyph(a_glyph, -0.8, 0.8);
             vertices.append(&mut self.glyph_cache.get_vertices_for_glyph(
                 b_glyph,
-                (256.0 / scaled_width) - 1.0 + 256.0 / scaled_width,
-                1.0 - (256.0 / scaled_height),
-                self.size.width,
-                self.size.height,
+                -0.8 + 2.0
+                    * self.logical_px_to_horizontal_screen_space_offset(
+                        a_glyph.px_scale().x.ceil() as u32,
+                    ),
+                0.8,
             ));
 
             if let Some(txt) = text {
@@ -266,7 +261,7 @@ impl GfxState {
                     .try_get_cached_font_with_scale(1, px_scale)
                     .unwrap();
                 let mut previous_char: Option<char> = None;
-                let mut caret_x = (256.0 / scaled_width) - 1.0;
+                let mut caret_x = -0.8;
                 for c in txt.chars() {
                     if let Some(glyph_data) =
                         self.glyph_cache.try_get_cached_glyph_data(1, c, px_scale)
@@ -276,13 +271,11 @@ impl GfxState {
                                 .kern(scaled_font.glyph_id(prev), scaled_font.glyph_id(c))
                                 / self.size.width as f32;
                         }
-                        vertices.append(&mut self.glyph_cache.get_vertices_for_glyph(
-                            glyph_data,
-                            caret_x,
-                            1.0 - (512.0 / scaled_height),
-                            self.size.width,
-                            self.size.height,
-                        ));
+                        vertices.append(
+                            &mut self
+                                .glyph_cache
+                                .get_vertices_for_glyph(glyph_data, caret_x, 0.6),
+                        );
                         caret_x +=
                             scaled_font.h_advance(scaled_font.glyph_id(c)) / self.size.width as f32;
                         previous_char = Some(c);
@@ -336,5 +329,13 @@ impl GfxState {
         output.present();
 
         Ok(())
+    }
+
+    fn logical_px_to_horizontal_screen_space_offset(&self, logical_px_offset: u32) -> f32 {
+        logical_px_offset as f32 * self.screen_scale_factor as f32 / self.size.width as f32
+    }
+
+    fn logical_px_to_vertical_screen_space_offset(&self, logical_px_offset: u32) -> f32 {
+        logical_px_offset as f32 * self.screen_scale_factor as f32 / self.size.height as f32
     }
 }
