@@ -228,8 +228,8 @@ impl GlyphCache {
 
     pub fn glyph_px_scale(&self, uniform_scale: f32) -> GlyphPxScale {
         GlyphPxScale {
-            x: uniform_scale * self.screen_scale_factor,
-            y: uniform_scale * self.screen_scale_factor,
+            x: uniform_scale,
+            y: uniform_scale,
             screen_scale_factor: self.screen_scale_factor,
         }
     }
