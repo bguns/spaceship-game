@@ -418,7 +418,7 @@ impl GlyphCache {
                 let glyph_data = GlyphData {
                     character,
                     font_idx,
-                    px_scale: px_scale.into(),
+                    px_scale,
                     px_bounds: px_bounds.into(),
                     uv_bounds: GlyphUvBounds::new(
                         texture_offset_u,
