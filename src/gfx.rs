@@ -65,7 +65,7 @@ impl GfxState {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let mut glyph_cache = GlyphCache::new(&device, GlyphPxScale::from(64.0), scale_factor);
+        let mut glyph_cache = GlyphCache::new(&device, scale_factor);
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -179,58 +179,6 @@ impl GfxState {
         }
     }
 
-    /*pub fn get_vertices_for_char(
-        &mut self,
-        font_idx: usize,
-        character: char,
-        px_scale: GlyphPxScale,
-        x: f32,
-        baseline_y: f32,
-    ) -> Result<Vec<Vertex>> {
-        let glyph_data = &self
-            .glyph_cache
-            .get_cached_glyph_data(font_idx, character, px_scale);
-
-        // Glyphs are already scaled to scale_factor in the texture cache, don'te rescale here.
-        let surface_width_px = self.size.width as f32;
-        let surface_height_px = self.size.height as f32;
-
-        let uv_bounds = &glyph_data.uv_bounds;
-        let px_bounds = &glyph_data.px_bounds;
-
-        let left = x + px_bounds.min.x / surface_width_px;
-        let right = x + px_bounds.max.x / surface_width_px;
-        let top = baseline_y + px_bounds.min.y / surface_height_px;
-        let bottom = baseline_y + px_bounds.max.y / surface_height_px;
-
-        Ok(vec![
-            Vertex {
-                position: [left, top, 0.0],
-                tex_coords: [uv_bounds.left(), uv_bounds.top()],
-            },
-            Vertex {
-                position: [left, bottom, 0.0],
-                tex_coords: [uv_bounds.left(), uv_bounds.bottom()],
-            },
-            Vertex {
-                position: [right, bottom, 0.0],
-                tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
-            },
-            Vertex {
-                position: [right, bottom, 0.0],
-                tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
-            },
-            Vertex {
-                position: [right, top, 0.0],
-                tex_coords: [uv_bounds.right(), uv_bounds.top()],
-            },
-            Vertex {
-                position: [left, top, 0.0],
-                tex_coords: [uv_bounds.left(), uv_bounds.top()],
-            },
-        ])
-    }*/
-
     pub fn render(&mut self, text: Option<&str>) -> Result<()> {
         // Get SurfaceTexture
         let output = self.surface.get_current_texture()?;
@@ -274,38 +222,24 @@ impl GfxState {
                 depth_stencil_attachment: None,
             });
 
+            let px_scale = self.glyph_cache.glyph_px_scale(128.0);
+
             self.glyph_cache.queue_write_texture_if_changed(&self.queue);
 
             let scaled_width = self.size.width as f32 / self.scale_factor as f32;
             let scaled_height = self.size.height as f32 / self.scale_factor as f32;
 
-            self.glyph_cache.ensure_glyph_cached(
-                0,
-                'a',
-                GlyphPxScale::from(128.0 * self.scale_factor as f32),
-            );
-            self.glyph_cache.ensure_glyph_cached(
-                0,
-                'b',
-                GlyphPxScale::from(128.0 * self.scale_factor as f32),
-            );
+            self.glyph_cache.ensure_glyph_cached(0, 'a', px_scale);
+            self.glyph_cache.ensure_glyph_cached(0, 'b', px_scale);
 
             let a_glyph = self
                 .glyph_cache
-                .try_get_cached_glyph_data(
-                    0,
-                    'a',
-                    GlyphPxScale::from(128.0 * self.scale_factor as f32),
-                )
+                .try_get_cached_glyph_data(0, 'a', px_scale)
                 .unwrap();
 
             let b_glyph = self
                 .glyph_cache
-                .try_get_cached_glyph_data(
-                    0,
-                    'b',
-                    GlyphPxScale::from(128.0 * self.scale_factor as f32),
-                )
+                .try_get_cached_glyph_data(0, 'b', px_scale)
                 .unwrap();
 
             let mut vertices = self.glyph_cache.get_vertices_for_glyph(
@@ -323,15 +257,9 @@ impl GfxState {
                 self.size.height,
             ));
 
-            let px_scale = GlyphPxScale::from(128.0 * self.scale_factor as f32);
-
             if let Some(txt) = text {
                 for c in txt.chars() {
-                    self.glyph_cache.ensure_glyph_cached(
-                        1,
-                        c,
-                        GlyphPxScale::from(128.0 * self.scale_factor as f32),
-                    );
+                    self.glyph_cache.ensure_glyph_cached(1, c, px_scale);
                 }
                 let scaled_font = self
                     .glyph_cache

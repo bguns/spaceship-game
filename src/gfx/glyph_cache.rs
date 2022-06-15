@@ -29,34 +29,26 @@ impl From<ab_glyph::Rect> for GlyphPxBounds {
 pub struct GlyphPxScale {
     pub x: f32,
     pub y: f32,
-}
-
-impl GlyphPxScale {
-    pub fn from(uniform_scale: f32) -> Self {
-        Self {
-            x: uniform_scale,
-            y: uniform_scale,
-        }
-    }
+    screen_scale_factor: f32,
 }
 
 impl GlyphPxScale {
     fn to_ab_glyph_px_scale(&self) -> ab_glyph::PxScale {
         ab_glyph::PxScale {
-            x: self.x,
-            y: self.y,
+            x: self.x * self.screen_scale_factor,
+            y: self.y * self.screen_scale_factor,
         }
     }
 }
 
-impl From<ab_glyph::PxScale> for GlyphPxScale {
+/*impl From<ab_glyph::PxScale> for GlyphPxScale {
     fn from(px_scale: ab_glyph::PxScale) -> Self {
         Self {
             x: px_scale.x,
             y: px_scale.y,
         }
     }
-}
+}*/
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlyphUvBounds {
@@ -104,6 +96,7 @@ pub struct FontData {
 }
 
 pub struct GlyphCache {
+    screen_scale_factor: f32,
     pub cached_fonts: Vec<FontData>,
     pub cached_glyphs: Vec<GlyphData>,
     texture_row_size: usize,
@@ -121,15 +114,11 @@ pub struct GlyphCache {
 }
 
 impl GlyphCache {
-    pub fn new(
-        device: &wgpu::Device,
-        initial_px_scale: GlyphPxScale,
-        window_scale_factor: f32,
-    ) -> Self {
+    pub fn new(device: &wgpu::Device, screen_scale_factor: f32) -> Self {
         let label = Some("glyph_cache_texture");
         let px_scale = ab_glyph::PxScale {
-            x: initial_px_scale.x * window_scale_factor,
-            y: initial_px_scale.y * window_scale_factor,
+            x: 64.0 * screen_scale_factor,
+            y: 64.0 * screen_scale_factor,
         };
 
         let cached_fonts: Vec<FontData> = Vec::new();
@@ -219,6 +208,7 @@ impl GlyphCache {
         });
 
         Self {
+            screen_scale_factor,
             cached_fonts,
             cached_glyphs,
             current_px_offset: cgmath::Point2 { x: 0, y: 0 },
@@ -233,6 +223,14 @@ impl GlyphCache {
             sampler,
             texture_bind_group_layout,
             texture_bind_group,
+        }
+    }
+
+    pub fn glyph_px_scale(&self, uniform_scale: f32) -> GlyphPxScale {
+        GlyphPxScale {
+            x: uniform_scale * self.screen_scale_factor,
+            y: uniform_scale * self.screen_scale_factor,
+            screen_scale_factor: self.screen_scale_factor,
         }
     }
 
