@@ -129,7 +129,7 @@ impl GfxState {
             mapped_at_creation: false,
         });
 
-        let font_path_1 = std::path::PathBuf::from("./fonts/fira-sans/FiraSans-Regular.otf");
+        let font_path_1 = std::path::PathBuf::from("./fonts/cascadia-code/Cascadia.ttf");
         let _ = glyph_cache.cache_font(font_path_1);
 
         let font_path_2 = std::path::PathBuf::from("./fonts/westwood-studio/Westwood Studio.ttf");
@@ -319,7 +319,7 @@ impl GfxState {
                 fps
             );
 
-            let px_scale = self.glyph_cache.glyph_px_scale(48.0);
+            let px_scale = self.glyph_cache.glyph_px_scale(32.0);
             for c in fps_text.chars() {
                 self.glyph_cache.ensure_glyph_cached(0, c, px_scale);
             }
