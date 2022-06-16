@@ -312,18 +312,10 @@ impl GlyphCache {
             position: [right, bottom, 0.0],
             tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
         });
-        /*Vertex {
-            position: [right, bottom, 0.0],
-            tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
-        },*/
         vertices.push(Vertex {
             position: [right, top, 0.0],
             tex_coords: [uv_bounds.right(), uv_bounds.top()],
         });
-        /*Vertex {
-            position: [left, top, 0.0],
-            tex_coords: [uv_bounds.left(), uv_bounds.top()],
-        },*/
 
         indices.push(0 + previous_vertices_len);
         indices.push(1 + previous_vertices_len);

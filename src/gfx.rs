@@ -251,8 +251,8 @@ impl GfxState {
                 .try_get_cached_glyph_data(0, 'b', px_scale)
                 .unwrap();
 
-            let mut vertices: Vec<Vertex> = Vec::new();
-            let mut indices: Vec<u16> = Vec::new();
+            let mut vertices: Vec<Vertex> = Vec::with_capacity(4000);
+            let mut indices: Vec<u16> = Vec::with_capacity(6000);
 
             self.glyph_cache.prepare_draw_for_glyph(
                 &mut vertices,
@@ -368,18 +368,10 @@ impl GfxState {
                     position: [1.0, -1.0, 0.0],
                     tex_coords: [1.0, 1.0],
                 },
-                /*Vertex {
-                    position: [1.0, -1.0, 0.0],
-                    tex_coords: [1.0, 1.0],
-                },*/
                 Vertex {
                     position: [1.0, 0.0, 0.0],
                     tex_coords: [1.0, 0.0],
                 },
-                /*Vertex {
-                    position: [0.0, 0.0, 0.0],
-                    tex_coords: [0.0, 0.0],
-                },*/
             ]);
 
             indices.append(&mut vec![
