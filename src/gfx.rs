@@ -19,6 +19,7 @@ pub struct GfxState {
     render_pipeline: wgpu::RenderPipeline,
     glyph_cache: GlyphCache,
     glyph_vertex_buffer: wgpu::Buffer,
+    glyph_index_buffer: wgpu::Buffer,
 }
 
 #[rustfmt::skip]
@@ -116,8 +117,15 @@ impl GfxState {
 
         let glyph_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glyph_vertex_buffer"),
-            size: (6000 as usize * std::mem::size_of::<Vertex>()) as wgpu::BufferAddress,
+            size: (4000 as usize * std::mem::size_of::<Vertex>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let glyph_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("glyph_index_buffer"),
+            size: (6000 as usize * std::mem::size_of::<u16>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -137,6 +145,7 @@ impl GfxState {
             render_pipeline,
             glyph_cache,
             glyph_vertex_buffer,
+            glyph_index_buffer,
         }
     }
 
@@ -242,15 +251,26 @@ impl GfxState {
                 .try_get_cached_glyph_data(0, 'b', px_scale)
                 .unwrap();
 
-            let mut vertices = self.glyph_cache.get_vertices_for_glyph(a_glyph, -0.8, 0.8);
-            vertices.append(&mut self.glyph_cache.get_vertices_for_glyph(
+            let mut vertices: Vec<Vertex> = Vec::new();
+            let mut indices: Vec<u16> = Vec::new();
+
+            self.glyph_cache.prepare_draw_for_glyph(
+                &mut vertices,
+                &mut indices,
+                a_glyph,
+                -0.8,
+                0.8,
+            );
+            self.glyph_cache.prepare_draw_for_glyph(
+                &mut vertices,
+                &mut indices,
                 b_glyph,
                 -0.8 + 2.0
                     * self.logical_px_to_horizontal_screen_space_offset(
                         a_glyph.px_scale().x.ceil() as u32,
                     ),
                 0.8,
-            ));
+            );
 
             if let Some(txt) = &game_state.text {
                 for c in txt.chars() {
@@ -271,11 +291,14 @@ impl GfxState {
                                 .kern(scaled_font.glyph_id(prev), scaled_font.glyph_id(c))
                                 / self.size.width as f32;
                         }
-                        vertices.append(
-                            &mut self
-                                .glyph_cache
-                                .get_vertices_for_glyph(glyph_data, caret_x, 0.6),
+                        self.glyph_cache.prepare_draw_for_glyph(
+                            &mut vertices,
+                            &mut indices,
+                            glyph_data,
+                            caret_x,
+                            0.6,
                         );
+
                         caret_x +=
                             scaled_font.h_advance(scaled_font.glyph_id(c)) / self.size.width as f32;
                         previous_char = Some(c);
@@ -314,10 +337,12 @@ impl GfxState {
                             .kern(scaled_font.glyph_id(prev), scaled_font.glyph_id(c))
                             / self.size.width as f32;
                     }
-                    vertices.append(
-                        &mut self
-                            .glyph_cache
-                            .get_vertices_for_glyph(glyph_data, caret_x, 0.9),
+                    self.glyph_cache.prepare_draw_for_glyph(
+                        &mut vertices,
+                        &mut indices,
+                        glyph_data,
+                        caret_x,
+                        0.9,
                     );
                     caret_x +=
                         scaled_font.h_advance(scaled_font.glyph_id(c)) / self.size.width as f32;
@@ -327,6 +352,8 @@ impl GfxState {
                         scaled_font.h_advance(scaled_font.glyph_id(' ')) / self.size.width as f32;
                 }
             }
+
+            let old_vertices_len = vertices.len() as u16;
 
             vertices.append(&mut vec![
                 Vertex {
@@ -341,18 +368,27 @@ impl GfxState {
                     position: [1.0, -1.0, 0.0],
                     tex_coords: [1.0, 1.0],
                 },
-                Vertex {
+                /*Vertex {
                     position: [1.0, -1.0, 0.0],
                     tex_coords: [1.0, 1.0],
-                },
+                },*/
                 Vertex {
                     position: [1.0, 0.0, 0.0],
                     tex_coords: [1.0, 0.0],
                 },
-                Vertex {
+                /*Vertex {
                     position: [0.0, 0.0, 0.0],
                     tex_coords: [0.0, 0.0],
-                },
+                },*/
+            ]);
+
+            indices.append(&mut vec![
+                0 + old_vertices_len,
+                1 + old_vertices_len,
+                2 + old_vertices_len,
+                2 + old_vertices_len,
+                3 + old_vertices_len,
+                0 + old_vertices_len,
             ]);
 
             self.queue.write_buffer(
@@ -361,10 +397,15 @@ impl GfxState {
                 bytemuck::cast_slice(&vertices),
             );
 
+            self.queue
+                .write_buffer(&self.glyph_index_buffer, 0, bytemuck::cast_slice(&indices));
+
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.glyph_cache.texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.glyph_vertex_buffer.slice(..));
-            render_pass.draw(0..vertices.len() as u32, 0..1);
+            render_pass
+                .set_index_buffer(self.glyph_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

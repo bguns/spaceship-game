@@ -278,12 +278,14 @@ impl GlyphCache {
         }
     }
 
-    pub fn get_vertices_for_glyph(
+    pub fn prepare_draw_for_glyph(
         &self,
+        vertices: &mut Vec<Vertex>,
+        indices: &mut Vec<u16>,
         glyph: &GlyphData,
         caret_x: f32,
         caret_y: f32,
-    ) -> Vec<Vertex> {
+    ) {
         // Glyphs are already scaled to scale_factor in the texture cache, don'te rescale here.
         let surface_width_px = self.surface_width as f32;
         let surface_height_px = self.surface_height as f32;
@@ -296,32 +298,39 @@ impl GlyphCache {
         let top = caret_y + px_bounds.min.y / surface_height_px;
         let bottom = caret_y + px_bounds.max.y / surface_height_px;
 
-        vec![
-            Vertex {
-                position: [left, top, 0.0],
-                tex_coords: [uv_bounds.left(), uv_bounds.top()],
-            },
-            Vertex {
-                position: [left, bottom, 0.0],
-                tex_coords: [uv_bounds.left(), uv_bounds.bottom()],
-            },
-            Vertex {
-                position: [right, bottom, 0.0],
-                tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
-            },
-            Vertex {
-                position: [right, bottom, 0.0],
-                tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
-            },
-            Vertex {
-                position: [right, top, 0.0],
-                tex_coords: [uv_bounds.right(), uv_bounds.top()],
-            },
-            Vertex {
-                position: [left, top, 0.0],
-                tex_coords: [uv_bounds.left(), uv_bounds.top()],
-            },
-        ]
+        let previous_vertices_len = vertices.len() as u16;
+
+        vertices.push(Vertex {
+            position: [left, top, 0.0],
+            tex_coords: [uv_bounds.left(), uv_bounds.top()],
+        });
+        vertices.push(Vertex {
+            position: [left, bottom, 0.0],
+            tex_coords: [uv_bounds.left(), uv_bounds.bottom()],
+        });
+        vertices.push(Vertex {
+            position: [right, bottom, 0.0],
+            tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
+        });
+        /*Vertex {
+            position: [right, bottom, 0.0],
+            tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
+        },*/
+        vertices.push(Vertex {
+            position: [right, top, 0.0],
+            tex_coords: [uv_bounds.right(), uv_bounds.top()],
+        });
+        /*Vertex {
+            position: [left, top, 0.0],
+            tex_coords: [uv_bounds.left(), uv_bounds.top()],
+        },*/
+
+        indices.push(0 + previous_vertices_len);
+        indices.push(1 + previous_vertices_len);
+        indices.push(2 + previous_vertices_len);
+        indices.push(2 + previous_vertices_len);
+        indices.push(3 + previous_vertices_len);
+        indices.push(0 + previous_vertices_len);
     }
 
     fn get_font_id_for_font_path(&self, font_path: &std::path::PathBuf) -> Option<usize> {
