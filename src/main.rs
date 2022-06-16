@@ -24,6 +24,7 @@ pub struct GameState {
     run_time: Duration,
     frame_number: u64,
     keyboard_state: KeyboardState,
+    text: Option<String>,
     should_quit: bool,
 }
 
@@ -39,6 +40,12 @@ impl GameState {
             .get_key_state(Keycode::LControl)
             .is_down()
             && self.keyboard_state.get_key_state(Keycode::Q).is_down();
+
+        let slice_end = std::cmp::min(
+            "Arrrrrrrrrrrrriverderci!".len(),
+            (self.frame_number / 2) as usize,
+        );
+        self.text = Some("Arrrrrrrrrrrrriverderci!"[0..slice_end].to_string());
         Ok(())
     }
 }
@@ -57,6 +64,7 @@ fn main() -> Result<()> {
         run_time: Duration::from_millis(0),
         frame_number: 0,
         keyboard_state,
+        text: Some("Arrrrrrrrrrrrriverderci!".to_string()),
         should_quit: false,
     };
 
@@ -97,8 +105,7 @@ fn main() -> Result<()> {
                 *control_flow = ControlFlow::WaitUntil(previous_frame_start + sixteen_millis)
             } else {
                 game_state.update(now).unwrap();
-                let slice_end = std::cmp::min("Arrrrrrrrrrrrriverderci!".len(), (game_state.frame_number / 2) as usize);
-                match gfx_state.render(Some(&"Arrrrrrrrrrrrriverderci!"[0..slice_end])) {
+                match gfx_state.render(&game_state) {
                     Ok(_) => {}
                     // Reconfigure the surface if lost
                     Err(GameError::WgpuError(wgpu::SurfaceError::Lost)) => gfx_state.resize(None),

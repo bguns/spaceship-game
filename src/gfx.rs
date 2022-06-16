@@ -121,7 +121,7 @@ impl GfxState {
             mapped_at_creation: false,
         });
 
-        let font_path_1 = std::path::PathBuf::from("./fonts/wqy-microhei/WenQuanYiMicroHei.ttf");
+        let font_path_1 = std::path::PathBuf::from("./fonts/fira-sans/FiraSans-Regular.otf");
         let _ = glyph_cache.cache_font(font_path_1);
 
         let font_path_2 = std::path::PathBuf::from("./fonts/westwood-studio/Westwood Studio.ttf");
@@ -182,7 +182,7 @@ impl GfxState {
         }
     }
 
-    pub fn render(&mut self, text: Option<&str>) -> Result<()> {
+    pub fn render(&mut self, game_state: &super::GameState) -> Result<()> {
         // Get SurfaceTexture
         let output = self.surface.get_current_texture()?;
         // Create TextureView with default settings
@@ -252,7 +252,7 @@ impl GfxState {
                 0.8,
             ));
 
-            if let Some(txt) = text {
+            if let Some(txt) = &game_state.text {
                 for c in txt.chars() {
                     self.glyph_cache.ensure_glyph_cached(1, c, px_scale);
                 }
@@ -283,6 +283,48 @@ impl GfxState {
                         caret_x += scaled_font.h_advance(scaled_font.glyph_id(' '))
                             / self.size.width as f32;
                     }
+                }
+            }
+
+            let fps = 1_000_000.0 / game_state.delta_time.as_micros() as f64;
+            let fps_text = &format!(
+                "Elapsed time: {}; Runtime: {}; dt: {:.2}, Frame number: {}; FPS: {:.2}",
+                game_state.start_time.elapsed().as_millis(),
+                game_state.run_time.as_millis(),
+                game_state.delta_time.as_micros() as f64 / 1_000.0,
+                game_state.frame_number,
+                fps
+            );
+
+            let px_scale = self.glyph_cache.glyph_px_scale(48.0);
+            for c in fps_text.chars() {
+                self.glyph_cache.ensure_glyph_cached(0, c, px_scale);
+            }
+            let scaled_font = self
+                .glyph_cache
+                .try_get_cached_font_with_scale(0, px_scale)
+                .unwrap();
+            let mut previous_char: Option<char> = None;
+            let mut caret_x = -0.9;
+            for c in fps_text.chars() {
+                if let Some(glyph_data) = self.glyph_cache.try_get_cached_glyph_data(0, c, px_scale)
+                {
+                    if let Some(prev) = previous_char {
+                        caret_x += scaled_font
+                            .kern(scaled_font.glyph_id(prev), scaled_font.glyph_id(c))
+                            / self.size.width as f32;
+                    }
+                    vertices.append(
+                        &mut self
+                            .glyph_cache
+                            .get_vertices_for_glyph(glyph_data, caret_x, 0.9),
+                    );
+                    caret_x +=
+                        scaled_font.h_advance(scaled_font.glyph_id(c)) / self.size.width as f32;
+                    previous_char = Some(c);
+                } else {
+                    caret_x +=
+                        scaled_font.h_advance(scaled_font.glyph_id(' ')) / self.size.width as f32;
                 }
             }
 
