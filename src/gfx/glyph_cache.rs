@@ -1,5 +1,5 @@
 use super::vertex::Vertex;
-use ab_glyph::Font;
+use ab_glyph::{Font, ScaleFont};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlyphPxBounds {
@@ -323,6 +323,42 @@ impl GlyphCache {
         indices.push(2 + previous_vertices_len);
         indices.push(3 + previous_vertices_len);
         indices.push(0 + previous_vertices_len);
+    }
+
+    pub fn prepare_draw_for_text(
+        &mut self,
+        text: &str,
+        font_idx: usize,
+        px_scale: GlyphPxScale,
+        caret_x: &mut f32,
+        caret_y: &mut f32,
+        vertices: &mut Vec<Vertex>,
+        indices: &mut Vec<u16>,
+    ) {
+        for c in text.chars() {
+            self.ensure_glyph_cached(font_idx, c, px_scale);
+        }
+        let scaled_font = self
+            .try_get_cached_font_with_scale(font_idx, px_scale)
+            .expect(&format!("Unable to find cached font with idx {}", font_idx));
+        let mut previous_char: Option<char> = None;
+        for c in text.chars() {
+            if let Some(glyph_data) = self.try_get_cached_glyph_data(font_idx, c, px_scale) {
+                if let Some(prev) = previous_char {
+                    *caret_x += scaled_font
+                        .kern(scaled_font.glyph_id(prev), scaled_font.glyph_id(c))
+                        / self.surface_width as f32;
+                }
+                self.prepare_draw_for_glyph(vertices, indices, glyph_data, *caret_x, *caret_y);
+
+                *caret_x +=
+                    scaled_font.h_advance(scaled_font.glyph_id(c)) / self.surface_width as f32;
+                previous_char = Some(c);
+            } else {
+                *caret_x +=
+                    scaled_font.h_advance(scaled_font.glyph_id(' ')) / self.surface_width as f32;
+            }
+        }
     }
 
     fn get_font_id_for_font_path(&self, font_path: &std::path::PathBuf) -> Option<usize> {

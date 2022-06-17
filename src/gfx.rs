@@ -272,41 +272,19 @@ impl GfxState {
                 0.8,
             );
 
-            if let Some(txt) = &game_state.text {
-                for c in txt.chars() {
-                    self.glyph_cache.ensure_glyph_cached(1, c, px_scale);
-                }
-                let scaled_font = self
-                    .glyph_cache
-                    .try_get_cached_font_with_scale(1, px_scale)
-                    .unwrap();
-                let mut previous_char: Option<char> = None;
-                let mut caret_x = -0.8;
-                for c in txt.chars() {
-                    if let Some(glyph_data) =
-                        self.glyph_cache.try_get_cached_glyph_data(1, c, px_scale)
-                    {
-                        if let Some(prev) = previous_char {
-                            caret_x += scaled_font
-                                .kern(scaled_font.glyph_id(prev), scaled_font.glyph_id(c))
-                                / self.size.width as f32;
-                        }
-                        self.glyph_cache.prepare_draw_for_glyph(
-                            &mut vertices,
-                            &mut indices,
-                            glyph_data,
-                            caret_x,
-                            0.6,
-                        );
+            let mut caret_x = -0.8;
+            let mut caret_y = 0.6;
 
-                        caret_x +=
-                            scaled_font.h_advance(scaled_font.glyph_id(c)) / self.size.width as f32;
-                        previous_char = Some(c);
-                    } else {
-                        caret_x += scaled_font.h_advance(scaled_font.glyph_id(' '))
-                            / self.size.width as f32;
-                    }
-                }
+            if let Some(txt) = &game_state.text {
+                self.glyph_cache.prepare_draw_for_text(
+                    txt,
+                    1,
+                    px_scale,
+                    &mut caret_x,
+                    &mut caret_y,
+                    &mut vertices,
+                    &mut indices,
+                );
             }
 
             let fps = 1_000_000.0 / game_state.delta_time.as_micros() as f64;
@@ -320,38 +298,19 @@ impl GfxState {
             );
 
             let px_scale = self.glyph_cache.glyph_px_scale(32.0);
-            for c in fps_text.chars() {
-                self.glyph_cache.ensure_glyph_cached(0, c, px_scale);
-            }
-            let scaled_font = self
-                .glyph_cache
-                .try_get_cached_font_with_scale(0, px_scale)
-                .unwrap();
-            let mut previous_char: Option<char> = None;
-            let mut caret_x = -0.9;
-            for c in fps_text.chars() {
-                if let Some(glyph_data) = self.glyph_cache.try_get_cached_glyph_data(0, c, px_scale)
-                {
-                    if let Some(prev) = previous_char {
-                        caret_x += scaled_font
-                            .kern(scaled_font.glyph_id(prev), scaled_font.glyph_id(c))
-                            / self.size.width as f32;
-                    }
-                    self.glyph_cache.prepare_draw_for_glyph(
-                        &mut vertices,
-                        &mut indices,
-                        glyph_data,
-                        caret_x,
-                        0.9,
-                    );
-                    caret_x +=
-                        scaled_font.h_advance(scaled_font.glyph_id(c)) / self.size.width as f32;
-                    previous_char = Some(c);
-                } else {
-                    caret_x +=
-                        scaled_font.h_advance(scaled_font.glyph_id(' ')) / self.size.width as f32;
-                }
-            }
+
+            caret_x = -0.9;
+            caret_y = 0.9;
+
+            self.glyph_cache.prepare_draw_for_text(
+                fps_text,
+                0,
+                px_scale,
+                &mut caret_x,
+                &mut caret_y,
+                &mut vertices,
+                &mut indices,
+            );
 
             let old_vertices_len = vertices.len() as u16;
 

@@ -84,20 +84,16 @@ fn main() -> Result<()> {
         Event::WindowEvent {
             ref event,
             window_id,
-        } if window_id == window.id() => {
-            match event {
-                WindowEvent::CloseRequested => {
-                    *control_flow = ControlFlow::Exit
-                }
-                WindowEvent::Resized(physical_size) => {
-                    gfx_state.resize(Some(*physical_size));
-                }
-                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                    gfx_state.resize(Some(**new_inner_size));
-                }
-                _ => {}
+        } if window_id == window.id() => match event {
+            WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+            WindowEvent::Resized(physical_size) => {
+                gfx_state.resize(Some(*physical_size));
             }
-        }
+            WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                gfx_state.resize(Some(**new_inner_size));
+            }
+            _ => {}
+        },
         Event::MainEventsCleared => {
             let now = Instant::now();
             let previous_frame_start = game_state.now;
@@ -110,22 +106,13 @@ fn main() -> Result<()> {
                     // Reconfigure the surface if lost
                     Err(GameError::WgpuError(wgpu::SurfaceError::Lost)) => gfx_state.resize(None),
                     // Out of graphics memory probably means we should quit.
-                    Err(GameError::WgpuError(wgpu::SurfaceError::OutOfMemory)) => *control_flow = ControlFlow::Exit,
+                    Err(GameError::WgpuError(wgpu::SurfaceError::OutOfMemory)) => {
+                        *control_flow = ControlFlow::Exit
+                    }
                     Err(e) => eprintln!("{:?}", e),
                 }
 
                 let elapsed = now.elapsed();
-                let max_fps = 1_000_000.0 / elapsed.as_micros() as f64;
-                let fps = 1_000_000.0 / game_state.delta_time.as_micros() as f64;
-                print!(
-                    "\rElapsed time: {}; Runtime: {}; dt: {:.2}, Frame number: {}; FPS: {:.2}; Max FPS: {:.2}",
-                    game_state.start_time.elapsed().as_millis(),
-                    game_state.run_time.as_millis(),
-                    game_state.delta_time.as_micros() as f64 / 1_000.0,
-                    game_state.frame_number,
-                    fps,
-                    max_fps
-                );
 
                 if elapsed < sixteen_millis {
                     *control_flow = ControlFlow::WaitUntil(now + sixteen_millis - elapsed);
