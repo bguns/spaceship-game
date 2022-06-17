@@ -1,12 +1,11 @@
 mod glyph_cache;
 mod vertex;
 
-use ab_glyph::ScaleFont;
 use pollster::FutureExt as _;
 use winit::window::Window;
 
 use crate::error::Result;
-use glyph_cache::{GlyphCache, GlyphPxScale};
+use glyph_cache::GlyphCache;
 use vertex::Vertex;
 
 pub struct GfxState {
@@ -234,7 +233,7 @@ impl GfxState {
                 depth_stencil_attachment: None,
             });
 
-            let px_scale = self.glyph_cache.glyph_px_scale(128.0);
+            let px_scale = self.glyph_cache.create_glyph_px_scale(128.0);
 
             self.glyph_cache.queue_write_texture_if_changed(&self.queue);
 
@@ -258,22 +257,20 @@ impl GfxState {
                 &mut vertices,
                 &mut indices,
                 a_glyph,
-                -0.8,
-                0.8,
+                -1.0 + self.logical_px_to_horizontal_screen_space_offset(256),
+                1.0 - self.logical_px_to_vertical_screen_space_offset(256),
             );
             self.glyph_cache.prepare_draw_for_glyph(
                 &mut vertices,
                 &mut indices,
                 b_glyph,
-                -0.8 + 2.0
-                    * self.logical_px_to_horizontal_screen_space_offset(
-                        a_glyph.px_scale().x.ceil() as u32,
-                    ),
-                0.8,
+                -1.0 + self.logical_px_to_horizontal_screen_space_offset(256)
+                    + 2.0 * self.glyph_cache.get_logical_caret_h_advance(a_glyph, None),
+                1.0 - self.logical_px_to_vertical_screen_space_offset(256),
             );
 
-            let mut caret_x = -0.8;
-            let mut caret_y = 0.6;
+            let mut caret_x = -1.0 + self.logical_px_to_horizontal_screen_space_offset(256);
+            let mut caret_y = 1.0 - self.logical_px_to_vertical_screen_space_offset(512);
 
             if let Some(txt) = &game_state.text {
                 self.glyph_cache.prepare_draw_for_text(
@@ -297,10 +294,10 @@ impl GfxState {
                 fps
             );
 
-            let px_scale = self.glyph_cache.glyph_px_scale(32.0);
+            let px_scale = self.glyph_cache.create_glyph_px_scale(32.0);
 
-            caret_x = -0.9;
-            caret_y = 0.9;
+            caret_x = -1.0 + self.logical_px_to_horizontal_screen_space_offset(64);
+            caret_y = 1.0 - self.logical_px_to_vertical_screen_space_offset(64);
 
             self.glyph_cache.prepare_draw_for_text(
                 fps_text,

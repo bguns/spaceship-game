@@ -27,8 +27,8 @@ impl From<ab_glyph::Rect> for GlyphPxBounds {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlyphPxScale {
-    pub x: f32,
-    pub y: f32,
+    x: f32,
+    y: f32,
     screen_scale_factor: f32,
 }
 
@@ -40,15 +40,6 @@ impl GlyphPxScale {
         }
     }
 }
-
-/*impl From<ab_glyph::PxScale> for GlyphPxScale {
-    fn from(px_scale: ab_glyph::PxScale) -> Self {
-        Self {
-            x: px_scale.x,
-            y: px_scale.y,
-        }
-    }
-}*/
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlyphUvBounds {
@@ -82,6 +73,7 @@ impl GlyphUvBounds {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlyphData {
     character: char,
+    glyph_id: ab_glyph::GlyphId,
     font_idx: usize,
     px_scale: GlyphPxScale,
     px_bounds: GlyphPxBounds,
@@ -89,7 +81,7 @@ pub struct GlyphData {
 }
 
 impl GlyphData {
-    pub fn px_scale(&self) -> &GlyphPxScale {
+    pub fn _px_scale(&self) -> &GlyphPxScale {
         &self.px_scale
     }
 }
@@ -246,12 +238,41 @@ impl GlyphCache {
         self.surface_height = surface_height;
     }
 
-    pub fn glyph_px_scale(&self, uniform_scale: f32) -> GlyphPxScale {
+    pub fn create_glyph_px_scale(&self, uniform_scale: f32) -> GlyphPxScale {
         GlyphPxScale {
             x: uniform_scale,
             y: uniform_scale,
             screen_scale_factor: self.screen_scale_factor,
         }
+    }
+
+    pub fn get_logical_caret_h_advance(
+        &self,
+        glyph: &GlyphData,
+        kern_with_next: Option<&GlyphData>,
+    ) -> f32 {
+        let scaled_font = self
+            .try_get_cached_font_with_scale(glyph.font_idx, glyph.px_scale)
+            .expect(&format!(
+                "Unable to find cached font with idx {}",
+                glyph.font_idx
+            ));
+
+        if let Some(next_glyph) = kern_with_next {
+            (scaled_font.h_advance(glyph.glyph_id)
+                + scaled_font.kern(glyph.glyph_id, next_glyph.glyph_id))
+                / self.surface_width as f32
+        } else {
+            scaled_font.h_advance(glyph.glyph_id) / self.surface_width as f32
+        }
+    }
+
+    pub fn _get_logical_caret_v_advance(&self, font_idx: usize, px_scale: &GlyphPxScale) -> f32 {
+        let scaled_font = self
+            .try_get_cached_font_with_scale(font_idx, *px_scale)
+            .expect(&format!("Unable to find cached font with idx {}", font_idx));
+
+        (scaled_font.height() + scaled_font.line_gap()) / self.surface_height as f32
     }
 
     pub fn cache_font(&mut self, font_path: std::path::PathBuf) -> usize {
@@ -275,6 +296,146 @@ impl GlyphCache {
             };
             self.cached_fonts.push(font_data);
             self.cached_fonts.len() - 1
+        }
+    }
+
+    fn get_font_id_for_font_path(&self, font_path: &std::path::PathBuf) -> Option<usize> {
+        for (idx, font) in self.cached_fonts.iter().enumerate() {
+            if font.path == *font_path {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    fn _get_font_id_for_font_name(&self, font_name: &str) -> Option<usize> {
+        for (idx, font) in self.cached_fonts.iter().enumerate() {
+            if &font.name == font_name {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
+    pub fn try_get_cached_font_with_scale(
+        &self,
+        font_idx: usize,
+        px_scale: GlyphPxScale,
+    ) -> Option<ab_glyph::PxScaleFont<&ab_glyph::FontVec>> {
+        if let Some(font_data) = self.cached_fonts.get(font_idx) {
+            Some(font_data.font.as_scaled(px_scale.to_ab_glyph_px_scale()))
+        } else {
+            None
+        }
+    }
+
+    pub fn try_get_cached_glyph_data(
+        &self,
+        font_idx: usize,
+        character: char,
+        px_scale: GlyphPxScale,
+    ) -> Option<&GlyphData> {
+        for glyph in &self.cached_glyphs {
+            if glyph.font_idx == font_idx
+                && glyph.character == character
+                && glyph.px_scale == px_scale
+            {
+                return Some(&glyph);
+            }
+        }
+        None
+    }
+
+    pub fn ensure_glyph_cached(
+        &mut self,
+        font_idx: usize,
+        character: char,
+        px_scale: GlyphPxScale,
+    ) {
+        if let None = self.try_get_cached_glyph_data(font_idx, character, px_scale) {
+            let font = &self.cached_fonts[font_idx].font;
+            let glyph_id = font.glyph_id(character);
+            let glyph = glyph_id.with_scale(px_scale.to_ab_glyph_px_scale());
+            if let Some(g) = font.outline_glyph(glyph) {
+                let px_bounds = g.px_bounds();
+                let px_width = px_bounds.max.x - px_bounds.min.x;
+                let px_height = px_bounds.max.y - px_bounds.min.y;
+                eprintln!("{}.px_bounds: {:?}", character, px_bounds);
+
+                if self.current_px_offset.x + px_width.ceil() as usize > self.texture_row_size {
+                    self.current_px_offset.x = 0;
+                    self.current_px_offset.y = self.max_y_assigned + 1;
+                    self.max_x_assigned = 0;
+                }
+                eprintln!(
+                    "current_px_offset.x: {}; current_px_offset.y: {}",
+                    self.current_px_offset.x, self.current_px_offset.y
+                );
+
+                let texture_offset_u: f32 =
+                    self.current_px_offset.x as f32 / self.texture_row_size as f32;
+                let texture_offset_v: f32 =
+                    self.current_px_offset.y as f32 / self.texture_rows as f32;
+                eprintln!(
+                    "texture_offset_u: {}; texture_offset_v: {}",
+                    texture_offset_u, texture_offset_v
+                );
+
+                let glyph_data = GlyphData {
+                    character,
+                    glyph_id,
+                    font_idx,
+                    px_scale,
+                    px_bounds: px_bounds.into(),
+                    uv_bounds: GlyphUvBounds::new(
+                        texture_offset_u,
+                        texture_offset_u + px_width / self.texture_row_size as f32,
+                        texture_offset_v,
+                        texture_offset_v + px_height / self.texture_rows as f32,
+                    ),
+                };
+
+                self.cached_glyphs.push(glyph_data);
+
+                g.draw(|x, y, c| {
+                    let offset_x = x as usize + self.current_px_offset.x;
+                    let offset_y = y as usize + self.current_px_offset.y;
+                    self.max_x_assigned = std::cmp::max(self.max_x_assigned, offset_x as usize);
+                    self.max_y_assigned = std::cmp::max(self.max_y_assigned, offset_y as usize);
+                    let idx = offset_y * self.texture_row_size + offset_x;
+                    self.texture_data[idx] = (c * 255.0) as u8;
+                });
+
+                self.current_px_offset.x = self.max_x_assigned + 1;
+
+                self.texture_data_dirty = true;
+            }
+        }
+    }
+
+    pub fn queue_write_texture_if_changed(&mut self, queue: &wgpu::Queue) {
+        if self.texture_data_dirty {
+            eprintln!("Writing texture data to texture.");
+            queue.write_texture(
+                wgpu::ImageCopyTexture {
+                    texture: &self.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &self.texture_data,
+                wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: std::num::NonZeroU32::new(self.texture_row_size as u32),
+                    rows_per_image: std::num::NonZeroU32::new(self.texture_rows as u32),
+                },
+                wgpu::Extent3d {
+                    width: self.texture_row_size as u32,
+                    height: self.texture_rows as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+            self.texture_data_dirty = false;
         }
     }
 
@@ -341,162 +502,19 @@ impl GlyphCache {
         let scaled_font = self
             .try_get_cached_font_with_scale(font_idx, px_scale)
             .expect(&format!("Unable to find cached font with idx {}", font_idx));
-        let mut previous_char: Option<char> = None;
+        let mut previous_glyph: Option<&GlyphData> = None;
         for c in text.chars() {
             if let Some(glyph_data) = self.try_get_cached_glyph_data(font_idx, c, px_scale) {
-                if let Some(prev) = previous_char {
-                    *caret_x += scaled_font
-                        .kern(scaled_font.glyph_id(prev), scaled_font.glyph_id(c))
-                        / self.surface_width as f32;
+                if let Some(prev) = previous_glyph {
+                    *caret_x += self.get_logical_caret_h_advance(prev, Some(glyph_data));
                 }
+
                 self.prepare_draw_for_glyph(vertices, indices, glyph_data, *caret_x, *caret_y);
 
-                *caret_x +=
-                    scaled_font.h_advance(scaled_font.glyph_id(c)) / self.surface_width as f32;
-                previous_char = Some(c);
+                previous_glyph = Some(glyph_data);
             } else {
                 *caret_x +=
                     scaled_font.h_advance(scaled_font.glyph_id(' ')) / self.surface_width as f32;
-            }
-        }
-    }
-
-    fn get_font_id_for_font_path(&self, font_path: &std::path::PathBuf) -> Option<usize> {
-        for (idx, font) in self.cached_fonts.iter().enumerate() {
-            if font.path == *font_path {
-                return Some(idx);
-            }
-        }
-        None
-    }
-
-    fn _get_font_id_for_font_name(&self, font_name: &str) -> Option<usize> {
-        for (idx, font) in self.cached_fonts.iter().enumerate() {
-            if &font.name == font_name {
-                return Some(idx);
-            }
-        }
-        None
-    }
-
-    pub fn try_get_cached_font_with_scale(
-        &self,
-        font_idx: usize,
-        px_scale: GlyphPxScale,
-    ) -> Option<ab_glyph::PxScaleFont<&ab_glyph::FontVec>> {
-        if let Some(font_data) = self.cached_fonts.get(font_idx) {
-            Some(font_data.font.as_scaled(px_scale.to_ab_glyph_px_scale()))
-        } else {
-            None
-        }
-    }
-
-    pub fn try_get_cached_glyph_data(
-        &self,
-        font_idx: usize,
-        character: char,
-        px_scale: GlyphPxScale,
-    ) -> Option<&GlyphData> {
-        for glyph in &self.cached_glyphs {
-            if glyph.font_idx == font_idx
-                && glyph.character == character
-                && glyph.px_scale == px_scale
-            {
-                return Some(&glyph);
-            }
-        }
-        None
-    }
-
-    pub fn queue_write_texture_if_changed(&mut self, queue: &wgpu::Queue) {
-        if self.texture_data_dirty {
-            eprintln!("Writing texture data to texture.");
-            queue.write_texture(
-                wgpu::ImageCopyTexture {
-                    texture: &self.texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &self.texture_data,
-                wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row: std::num::NonZeroU32::new(self.texture_row_size as u32),
-                    rows_per_image: std::num::NonZeroU32::new(self.texture_rows as u32),
-                },
-                wgpu::Extent3d {
-                    width: self.texture_row_size as u32,
-                    height: self.texture_rows as u32,
-                    depth_or_array_layers: 1,
-                },
-            );
-            self.texture_data_dirty = false;
-        }
-    }
-
-    pub fn ensure_glyph_cached(
-        &mut self,
-        font_idx: usize,
-        character: char,
-        px_scale: GlyphPxScale,
-    ) {
-        if let None = self.try_get_cached_glyph_data(font_idx, character, px_scale) {
-            let font = &self.cached_fonts[font_idx].font;
-            let glyph = font
-                .glyph_id(character)
-                .with_scale(px_scale.to_ab_glyph_px_scale());
-            if let Some(g) = font.outline_glyph(glyph) {
-                let px_bounds = g.px_bounds();
-                let px_width = px_bounds.max.x - px_bounds.min.x;
-                let px_height = px_bounds.max.y - px_bounds.min.y;
-                eprintln!("{}.px_bounds: {:?}", character, px_bounds);
-
-                if self.current_px_offset.x + px_width.ceil() as usize > self.texture_row_size {
-                    self.current_px_offset.x = 0;
-                    self.current_px_offset.y = self.max_y_assigned + 1;
-                    self.max_x_assigned = 0;
-                }
-                eprintln!(
-                    "current_px_offset.x: {}; current_px_offset.y: {}",
-                    self.current_px_offset.x, self.current_px_offset.y
-                );
-
-                let texture_offset_u: f32 =
-                    self.current_px_offset.x as f32 / self.texture_row_size as f32;
-                let texture_offset_v: f32 =
-                    self.current_px_offset.y as f32 / self.texture_rows as f32;
-                eprintln!(
-                    "texture_offset_u: {}; texture_offset_v: {}",
-                    texture_offset_u, texture_offset_v
-                );
-
-                let glyph_data = GlyphData {
-                    character,
-                    font_idx,
-                    px_scale,
-                    px_bounds: px_bounds.into(),
-                    uv_bounds: GlyphUvBounds::new(
-                        texture_offset_u,
-                        texture_offset_u + px_width / self.texture_row_size as f32,
-                        texture_offset_v,
-                        texture_offset_v + px_height / self.texture_rows as f32,
-                    ),
-                };
-
-                self.cached_glyphs.push(glyph_data);
-
-                g.draw(|x, y, c| {
-                    let offset_x = x as usize + self.current_px_offset.x;
-                    let offset_y = y as usize + self.current_px_offset.y;
-                    self.max_x_assigned = std::cmp::max(self.max_x_assigned, offset_x as usize);
-                    self.max_y_assigned = std::cmp::max(self.max_y_assigned, offset_y as usize);
-                    let idx = offset_y * self.texture_row_size + offset_x;
-                    self.texture_data[idx] = (c * 255.0) as u8;
-                });
-
-                self.current_px_offset.x = self.max_x_assigned + 1;
-
-                self.texture_data_dirty = true;
             }
         }
     }

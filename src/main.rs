@@ -74,7 +74,7 @@ fn main() -> Result<()> {
     let window = WindowBuilder::new()
         .with_title("Game")
         .with_inner_size(LogicalSize::new(1440.0, 900.0))
-        .with_decorations(false)
+        //.with_decorations(false)
         .build(&event_loop)
         .unwrap();
 
