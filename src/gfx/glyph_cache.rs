@@ -70,14 +70,16 @@ impl GlyphUvBounds {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug)]
 pub struct GlyphData {
     character: char,
     glyph_id: ab_glyph::GlyphId,
     font_idx: usize,
     px_scale: GlyphPxScale,
-    px_bounds: GlyphPxBounds,
-    uv_bounds: GlyphUvBounds,
+    _px_bounds: GlyphPxBounds,
+    _uv_bounds: GlyphUvBounds,
+    vertices: [Vertex; 4],
+    indices: [u16; 6],
 }
 
 impl GlyphData {
@@ -381,18 +383,51 @@ impl GlyphCache {
                     texture_offset_u, texture_offset_v
                 );
 
+                let px_bounds: GlyphPxBounds = px_bounds.into();
+                let uv_bounds: GlyphUvBounds = GlyphUvBounds::new(
+                    texture_offset_u,
+                    texture_offset_u + px_width / self.texture_row_size as f32,
+                    texture_offset_v,
+                    texture_offset_v + px_height / self.texture_rows as f32,
+                );
+
+                let surface_width_px = self.surface_width as f32;
+                let surface_height_px = self.surface_height as f32;
+
+                let left = px_bounds.min.x / surface_width_px;
+                let right = px_bounds.max.x / surface_width_px;
+                let top = px_bounds.min.y / surface_height_px;
+                let bottom = px_bounds.max.y / surface_height_px;
+
+                let vertices: [Vertex; 4] = [
+                    Vertex {
+                        position: [left, top, 0.0],
+                        tex_coords: [uv_bounds.left(), uv_bounds.top()],
+                    },
+                    Vertex {
+                        position: [left, bottom, 0.0],
+                        tex_coords: [uv_bounds.left(), uv_bounds.bottom()],
+                    },
+                    Vertex {
+                        position: [right, bottom, 0.0],
+                        tex_coords: [uv_bounds.right(), uv_bounds.bottom()],
+                    },
+                    Vertex {
+                        position: [right, top, 0.0],
+                        tex_coords: [uv_bounds.right(), uv_bounds.top()],
+                    },
+                ];
+                let indices: [u16; 6] = [0, 1, 2, 2, 3, 0];
+
                 let glyph_data = GlyphData {
                     character,
                     glyph_id,
                     font_idx,
                     px_scale,
-                    px_bounds: px_bounds.into(),
-                    uv_bounds: GlyphUvBounds::new(
-                        texture_offset_u,
-                        texture_offset_u + px_width / self.texture_row_size as f32,
-                        texture_offset_v,
-                        texture_offset_v + px_height / self.texture_rows as f32,
-                    ),
+                    _px_bounds: px_bounds,
+                    _uv_bounds: uv_bounds,
+                    vertices,
+                    indices,
                 };
 
                 self.cached_glyphs.push(glyph_data);
@@ -448,7 +483,7 @@ impl GlyphCache {
         caret_y: f32,
     ) {
         // Glyphs are already scaled to scale_factor in the texture cache, don'te rescale here.
-        let surface_width_px = self.surface_width as f32;
+        /*let surface_width_px = self.surface_width as f32;
         let surface_height_px = self.surface_height as f32;
 
         let uv_bounds = glyph.uv_bounds;
@@ -483,7 +518,15 @@ impl GlyphCache {
         indices.push(2 + previous_vertices_len);
         indices.push(2 + previous_vertices_len);
         indices.push(3 + previous_vertices_len);
-        indices.push(0 + previous_vertices_len);
+        indices.push(0 + previous_vertices_len);*/
+
+        let previous_vertices_len = vertices.len() as u16;
+        for v in glyph.vertices {
+            vertices.push(v.offset(caret_x, caret_y, 0.0));
+        }
+        for i in glyph.indices {
+            indices.push(i + previous_vertices_len);
+        }
     }
 
     pub fn prepare_draw_for_text(

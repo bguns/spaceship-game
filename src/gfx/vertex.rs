@@ -24,4 +24,15 @@ impl Vertex {
             ],
         }
     }
+
+    pub fn offset(&self, x: f32, y: f32, z: f32) -> Self {
+        Vertex {
+            position: [
+                self.position[0] + x,
+                self.position[1] + y,
+                self.position[2] + z,
+            ],
+            tex_coords: self.tex_coords,
+        }
+    }
 }
