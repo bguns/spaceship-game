@@ -17,8 +17,9 @@ pub struct GfxState {
     screen_scale_factor: f32,
     render_pipeline: wgpu::RenderPipeline,
     glyph_cache: GlyphCache,
-    glyph_vertex_buffer: wgpu::Buffer,
+    vertex_buffer: wgpu::Buffer,
     glyph_index_buffer: wgpu::Buffer,
+    line_render_pipeline: wgpu::RenderPipeline,
 }
 
 #[rustfmt::skip]
@@ -61,7 +62,7 @@ impl GfxState {
         surface.configure(&device, &config);
 
         let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-            label: Some("Shader"),
+            label: Some("Glyph Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
@@ -70,7 +71,7 @@ impl GfxState {
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Render Pipeline Layout"),
+                label: Some("Glyph Render Pipeline Layout"),
                 bind_group_layouts: &[&glyph_cache.texture_bind_group_layout],
                 push_constant_ranges: &[],
             });
@@ -114,7 +115,7 @@ impl GfxState {
             multiview: None,
         });
 
-        let glyph_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("glyph_vertex_buffer"),
             size: (4000 as usize * std::mem::size_of::<Vertex>()) as wgpu::BufferAddress,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
@@ -134,6 +135,57 @@ impl GfxState {
         let font_path_2 = std::path::PathBuf::from("./fonts/westwood-studio/Westwood Studio.ttf");
         let _ = glyph_cache.cache_font(font_path_2);
 
+        let line_shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: Some("Line Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("line-shader.wgsl").into()),
+        });
+
+        let line_render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Line Render Pipeline Layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+
+        let line_render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Line Render Pipeline"),
+            layout: Some(&line_render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &line_shader,
+                entry_point: "vs_main",
+                // What type of vertices we want to pass to the vertex shader.
+                buffers: &[Vertex::desc()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &line_shader,
+                entry_point: "fs_main",
+                targets: &[wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::LineList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        });
+
         GfxState {
             surface,
             device,
@@ -143,8 +195,9 @@ impl GfxState {
             screen_scale_factor,
             render_pipeline,
             glyph_cache,
-            glyph_vertex_buffer,
+            vertex_buffer,
             glyph_index_buffer,
+            line_render_pipeline,
         }
     }
 
@@ -208,7 +261,7 @@ impl GfxState {
         // is dropped before we can call encoder.finish()
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Render Pass"),
+                label: Some("Glyph Render Pass"),
                 color_attachments: &[
                     // This is what [[location(0)]] in the fragment shader targets
                     wgpu::RenderPassColorAttachment {
@@ -339,21 +392,88 @@ impl GfxState {
                 0 + old_vertices_len,
             ]);
 
-            self.queue.write_buffer(
-                &self.glyph_vertex_buffer,
-                0,
-                bytemuck::cast_slice(&vertices),
-            );
+            self.queue
+                .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
 
             self.queue
                 .write_buffer(&self.glyph_index_buffer, 0, bytemuck::cast_slice(&indices));
 
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.glyph_cache.texture_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.glyph_vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass
                 .set_index_buffer(self.glyph_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+        }
+
+        // begin_render_pass borrows encoder mutably, so we need to make sure that the borrow
+        // is dropped before we can call encoder.finish()
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Line Render Pass"),
+                color_attachments: &[
+                    // This is what [[location(0)]] in the fragment shader targets
+                    wgpu::RenderPassColorAttachment {
+                        // The view to save the colors to. In this case, the screen.
+                        view: &view,
+                        // Target that will receive the resolved output. Is the same as `view` unless multisampling is enabled.
+                        resolve_target: None,
+                        // What to do with the colors on the view (i.e. the screen)
+                        ops: wgpu::Operations {
+                            // Load tells wgpu how to handle colors stored from the previous frame (we clear the screen)
+                            load: wgpu::LoadOp::Load,
+                            // We want to store the rendered results to the (Surface)Texture behind the TextureView (the view)
+                            store: true,
+                        },
+                    },
+                ],
+                depth_stencil_attachment: None,
+            });
+
+            let line_vertices: &[Vertex] = &[
+                Vertex {
+                    position: [-0.8, -0.2, 0.0],
+                    tex_coords: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [-0.8, -0.4, 0.0],
+                    tex_coords: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [-0.8, -0.4, 0.0],
+                    tex_coords: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [-0.6, -0.4, 0.0],
+                    tex_coords: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [-0.6, -0.4, 0.0],
+                    tex_coords: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [-0.6, -0.2, 0.0],
+                    tex_coords: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [-0.6, -0.2, 0.0],
+                    tex_coords: [0.0, 0.0],
+                },
+                Vertex {
+                    position: [-0.8, -0.2, 0.0],
+                    tex_coords: [0.0, 0.0],
+                },
+            ];
+
+            self.queue
+                .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(line_vertices));
+
+            render_pass.set_pipeline(&self.line_render_pipeline);
+            //render_pass.set_bind_group(0, &self.glyph_cache.texture_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            /*render_pass
+            .set_index_buffer(self.glyph_index_buffer.slice(..), wgpu::IndexFormat::Uint16);*/
+            render_pass.draw(0..8, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
