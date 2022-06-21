@@ -1,27 +1,51 @@
 // Vertex shader
 
-struct VertexInput {
-    [[location(0)]] position: vec3<f32>;
-    [[location(1)]] tex_coords: vec2<f32>;
+struct LineVertexInput {
+    [[location(0)]] line_start: vec3<f32>;
+    [[location(1)]] line_end: vec3<f32>;
+    [[location(2)]] thickness: f32;
 };
 
-struct VertexOutput {
+struct LineVertexOutput {
     [[builtin(position)]] clip_position: vec4<f32>;
+    line_start: vec3<f32>;
+    line_end: vec3<f32>;
+    line_normalized: vec3<f32>;
+    thickness: f32;
 };
+
 
 [[stage(vertex)]]
 fn vs_main(
-    model: VertexInput,
-) -> VertexOutput {
+    model: LineVertexInput,
+) -> LineVertexOutput {
     var out: VertexOutput;
-    out.clip_position = vec4<f32>(model.position, 1.0);
+    out.clip_position = vec4<f32>(model.line_start, 1.0);
+    out.line_start = model.line_start;
+    out.line_end = model.line_end;
+    out.thickness = model.thickness;
+    out.line_normalized = normalize(model.line_end - model.line_start);
     return out;
 }
 
 // Fragment shader
+fn distance_squared_from_line(line_start: vec2<f32>, line_normalized: vec2<f32>, point: vec2<f32>) -> f32 {
+    let proj = line_start + line_normalized * dot(point - line_start, line_normalized);
+    return proj.x * proj.x + proj.y * proj.y;
+}
+
+[[group(0), binding(0)]]
+var surface_dimensions_px: vec2<f32>;
+
+
 [[stage(fragment)]]
 fn fs_main(
-    in: VertexOutput,
+    in: LineVertexOutput,
 ) -> [[location(0)]] vec4<f32> {
-    return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+    var uv = in.clip_position.xy / surface_dimensions_px;
+    uv.x = (uv.x - 0.5) * 2.0;
+    uv.y = ((1 - uv.y) - 0.5) * 2.0;
+    let c = 1.0 * f32(distance_squared_from_line(in.line_start, in.line_normalized, uv));
+    
+    return vec4<f32>(0.0, c, c, 1.0);
 }

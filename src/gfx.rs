@@ -2,11 +2,18 @@ mod glyph_cache;
 mod vertex;
 
 use pollster::FutureExt as _;
+use wgpu::util::DeviceExt;
 use winit::window::Window;
 
 use crate::error::Result;
 use glyph_cache::GlyphCache;
 use vertex::Vertex;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct SurfaceDimensionsPxUniform {
+    surface_dimensions_px: [f32; 2],
+}
 
 pub struct GfxState {
     surface: wgpu::Surface,
@@ -20,6 +27,8 @@ pub struct GfxState {
     vertex_buffer: wgpu::Buffer,
     glyph_index_buffer: wgpu::Buffer,
     line_render_pipeline: wgpu::RenderPipeline,
+    surface_dimensions_buffer: wgpu::Buffer,
+    surface_dimensions_bind_group: wgpu::BindGroup,
 }
 
 #[rustfmt::skip]
@@ -135,6 +144,41 @@ impl GfxState {
         let font_path_2 = std::path::PathBuf::from("./fonts/westwood-studio/Westwood Studio.ttf");
         let _ = glyph_cache.cache_font(font_path_2);
 
+        let surface_dimensions_px_uniform = SurfaceDimensionsPxUniform {
+            surface_dimensions_px: [size.width as f32, size.height as f32],
+        };
+
+        let surface_dimensions_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Surface Dimensions Buffer"),
+                contents: bytemuck::cast_slice(&[surface_dimensions_px_uniform]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
+
+        let surface_dimensions_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("surface_dimensions_bind_group_layout"),
+            });
+
+        let surface_dimensions_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &surface_dimensions_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: surface_dimensions_buffer.as_entire_binding(),
+            }],
+            label: Some("surface_dimensions_bind_group"),
+        });
+
         let line_shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some("Line Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("line-shader.wgsl").into()),
@@ -143,7 +187,7 @@ impl GfxState {
         let line_render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Line Render Pipeline Layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&surface_dimensions_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -198,6 +242,8 @@ impl GfxState {
             vertex_buffer,
             glyph_index_buffer,
             line_render_pipeline,
+            surface_dimensions_buffer,
+            surface_dimensions_bind_group,
         }
     }
 
