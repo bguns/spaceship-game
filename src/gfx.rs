@@ -7,7 +7,7 @@ use winit::window::Window;
 
 use crate::error::Result;
 use glyph_cache::GlyphCache;
-use vertex::Vertex;
+use vertex::{LineVertex, Vertex};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -26,6 +26,7 @@ pub struct GfxState {
     glyph_cache: GlyphCache,
     vertex_buffer: wgpu::Buffer,
     glyph_index_buffer: wgpu::Buffer,
+    line_vertex_buffer: wgpu::Buffer,
     line_render_pipeline: wgpu::RenderPipeline,
     surface_dimensions_buffer: wgpu::Buffer,
     surface_dimensions_bind_group: wgpu::BindGroup,
@@ -179,6 +180,13 @@ impl GfxState {
             label: Some("surface_dimensions_bind_group"),
         });
 
+        let line_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("line_vertex_buffer"),
+            size: (4000 as usize * std::mem::size_of::<LineVertex>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let line_shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
             label: Some("Line Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("line-shader.wgsl").into()),
@@ -198,7 +206,7 @@ impl GfxState {
                 module: &line_shader,
                 entry_point: "vs_main",
                 // What type of vertices we want to pass to the vertex shader.
-                buffers: &[Vertex::desc()],
+                buffers: &[LineVertex::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &line_shader,
@@ -210,7 +218,7 @@ impl GfxState {
                 }],
             }),
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
+                topology: wgpu::PrimitiveTopology::PointList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
@@ -241,6 +249,7 @@ impl GfxState {
             glyph_cache,
             vertex_buffer,
             glyph_index_buffer,
+            line_vertex_buffer,
             line_render_pipeline,
             surface_dimensions_buffer,
             surface_dimensions_bind_group,
@@ -476,12 +485,13 @@ impl GfxState {
                 depth_stencil_attachment: None,
             });
 
-            let line_vertices: &[Vertex] = &[
-                Vertex {
-                    position: [-0.8, -0.2, 0.0],
-                    tex_coords: [0.0, 0.0],
+            let line_vertices: &[LineVertex] = &[
+                LineVertex {
+                    line_start: [0.0, 0.0, 0.0],
+                    line_end: [0.5, 0.5, 0.0],
+                    thickness: 1.0,
                 },
-                Vertex {
+                /*Vertex {
                     position: [-0.8, -0.4, 0.0],
                     tex_coords: [0.0, 0.0],
                 },
@@ -508,15 +518,19 @@ impl GfxState {
                 Vertex {
                     position: [-0.8, -0.2, 0.0],
                     tex_coords: [0.0, 0.0],
-                },
+                },*/
             ];
 
-            self.queue
-                .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(line_vertices));
+            self.queue.write_buffer(
+                &self.line_vertex_buffer,
+                0,
+                bytemuck::cast_slice(line_vertices),
+            );
 
             render_pass.set_pipeline(&self.line_render_pipeline);
+            render_pass.set_bind_group(0, &self.surface_dimensions_bind_group, &[]);
             //render_pass.set_bind_group(0, &self.glyph_cache.texture_bind_group, &[]);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
             /*render_pass
             .set_index_buffer(self.glyph_index_buffer.slice(..), wgpu::IndexFormat::Uint16);*/
             render_pass.draw(0..8, 0..1);
