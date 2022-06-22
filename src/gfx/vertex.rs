@@ -40,8 +40,9 @@ impl Vertex {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LineVertex {
-    pub line_start: [f32; 3],
-    pub line_end: [f32; 3],
+    pub position: [f32; 3],
+    pub previous_point: [f32; 3],
+    pub next_point: [f32; 3],
     pub thickness: f32,
 }
 
@@ -62,9 +63,14 @@ impl LineVertex {
                     shader_location: 1,
                 },
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32,
+                    format: wgpu::VertexFormat::Float32x3,
                     offset: 2 * std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     shader_location: 2,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32,
+                    offset: 3 * std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 3,
                 },
             ],
         }
