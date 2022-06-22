@@ -160,7 +160,7 @@ impl GfxState {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
@@ -221,7 +221,7 @@ impl GfxState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
                 polygon_mode: wgpu::PolygonMode::Fill,
                 // Requires Features::DEPTH_CLIP_CONTROL
@@ -487,11 +487,114 @@ impl GfxState {
 
             let line_vertices: &[LineVertex] = &[
                 LineVertex {
-                    line_start: [0.0, 0.0, 0.0],
-                    line_end: [0.5, 0.5, 0.0],
-                    thickness: 1.0,
+                    position: [0.0, 0.0, 0.0],
+                    previous_point: [-2.0, -2.0, 0.0],
+                    next_point: [0.5, 0.5, 0.0],
+                    thickness: 10.0,
+                    miter_dir: -1.0,
                 },
-                /*Vertex {
+                LineVertex {
+                    position: [0.0, 0.0, 0.0],
+                    previous_point: [-2.0, -2.0, 0.0],
+                    next_point: [0.5, 0.5, 0.0],
+                    thickness: 10.0,
+                    miter_dir: 1.0,
+                },
+                LineVertex {
+                    position: [0.5, 0.5, 0.0],
+                    previous_point: [0.0, 0.0, 0.0],
+                    next_point: [0.5, 0.0, 0.0],
+                    thickness: 10.0,
+                    miter_dir: 1.0,
+                },
+                LineVertex {
+                    position: [0.5, 0.5, 0.0],
+                    previous_point: [0.0, 0.0, 0.0],
+                    next_point: [0.5, 0.0, 0.0],
+                    thickness: 10.0,
+                    miter_dir: -1.0,
+                },
+                LineVertex {
+                    position: [0.5, 0.5, 0.0],
+                    previous_point: [0.0, 0.0, 0.0],
+                    next_point: [0.5, 0.0, 0.0],
+                    thickness: 10.0,
+                    miter_dir: 1.0,
+                },
+                LineVertex {
+                    position: [0.0, 0.0, 0.0],
+                    previous_point: [-2.0, -2.0, 0.0],
+                    next_point: [0.5, 0.5, 0.0],
+                    thickness: 10.0,
+                    miter_dir: -1.0,
+                },
+                LineVertex {
+                    position: [0.5, 0.5, 0.0],
+                    previous_point: [0.0, 0.0, 0.0],
+                    next_point: [0.5, 0.0, 0.0],
+                    thickness: 10.0,
+                    miter_dir: -1.0,
+                },
+                LineVertex {
+                    position: [0.5, 0.5, 0.0],
+                    previous_point: [0.0, 0.0, 0.0],
+                    next_point: [0.5, 0.0, 0.0],
+                    thickness: 10.0,
+                    miter_dir: 1.0,
+                },
+                LineVertex {
+                    position: [0.5, 0.0, 0.0],
+                    previous_point: [0.5, 0.5, 0.0],
+                    next_point: [2.0, 2.0, 0.0],
+                    thickness: 10.0,
+                    miter_dir: 1.0,
+                },
+                LineVertex {
+                    position: [0.5, 0.0, 0.0],
+                    previous_point: [0.5, 0.5, 0.0],
+                    next_point: [2.0, 2.0, 0.0],
+                    thickness: 10.0,
+                    miter_dir: -1.0,
+                },
+                LineVertex {
+                    position: [0.5, 0.0, 0.0],
+                    previous_point: [0.5, 0.5, 0.0],
+                    next_point: [2.0, 2.0, 0.0],
+                    thickness: 10.0,
+                    miter_dir: 1.0,
+                },
+                LineVertex {
+                    position: [0.5, 0.5, 0.0],
+                    previous_point: [0.0, 0.0, 0.0],
+                    next_point: [0.5, 0.0, 0.0],
+                    thickness: 10.0,
+                    miter_dir: -1.0,
+                },
+                /*LineVertex {
+                    position: [0.0, 0.0, 0.0],
+                    previous_point: [-2.0, -2.0, -2.0],
+                    next_point: [0.5, 0.5, 0.0],
+                    thickness: 0.1,
+                },
+                LineVertex {
+                    position: [0.5, 0.5, 0.0],
+                    previous_point: [0.0, 0.0, 0.0],
+                    next_point: [2.0, 2.0, 2.0],
+                    thickness: 0.1,
+                },
+                LineVertex {
+                    position: [0.5, 0.0, 0.0],
+                    previous_point: [0.5, 0.5, 0.0],
+                    next_point: [2.0, 2.0, 2.0],
+                    thickness: 0.1,
+                },
+                LineVertex {
+                    position: [0.5, 0.5, 0.0],
+                    previous_point: [0.0, 0.0, 0.0],
+                    next_point: [0.5, 2.0, 2.0],
+                    thickness: 0.1,
+                },
+                Vertex {
                     position: [-0.8, -0.4, 0.0],
                     tex_coords: [0.0, 0.0],
                 },
@@ -533,7 +636,7 @@ impl GfxState {
             render_pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
             /*render_pass
             .set_index_buffer(self.glyph_index_buffer.slice(..), wgpu::IndexFormat::Uint16);*/
-            render_pass.draw(0..8, 0..1);
+            render_pass.draw(0..12, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
