@@ -238,6 +238,7 @@ impl GlyphCache {
     pub fn surface_resized(&mut self, surface_width: u32, surface_height: u32) {
         self.surface_width = surface_width;
         self.surface_height = surface_height;
+        self.recache_glyphs();
     }
 
     pub fn create_glyph_px_scale(&self, uniform_scale: f32) -> GlyphPxScale {
@@ -445,6 +446,16 @@ impl GlyphCache {
 
                 self.texture_data_dirty = true;
             }
+        }
+    }
+
+    fn recache_glyphs(&mut self) {
+        let cached_glyphs: Vec<GlyphData> = self.cached_glyphs.drain(..).collect();
+        self.current_px_offset = cgmath::Point2 { x: 0, y: 0 };
+        self.max_x_assigned = 0;
+        self.max_y_assigned = 0;
+        for glyph in cached_glyphs {
+            self.ensure_glyph_cached(glyph.font_idx, glyph.character, glyph.px_scale);
         }
     }
 
