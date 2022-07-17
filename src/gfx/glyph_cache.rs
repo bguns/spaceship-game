@@ -238,7 +238,7 @@ impl GlyphCache {
     pub fn surface_resized(&mut self, surface_width: u32, surface_height: u32) {
         self.surface_width = surface_width;
         self.surface_height = surface_height;
-        self.recache_glyphs();
+        self.recache_glyph_vertices();
     }
 
     pub fn create_glyph_px_scale(&self, uniform_scale: f32) -> GlyphPxScale {
@@ -363,26 +363,17 @@ impl GlyphCache {
                 let px_bounds = g.px_bounds();
                 let px_width = px_bounds.max.x - px_bounds.min.x;
                 let px_height = px_bounds.max.y - px_bounds.min.y;
-                eprintln!("{}.px_bounds: {:?}", character, px_bounds);
 
                 if self.current_px_offset.x + px_width.ceil() as usize > self.texture_row_size {
                     self.current_px_offset.x = 0;
                     self.current_px_offset.y = self.max_y_assigned + 1;
                     self.max_x_assigned = 0;
                 }
-                eprintln!(
-                    "current_px_offset.x: {}; current_px_offset.y: {}",
-                    self.current_px_offset.x, self.current_px_offset.y
-                );
 
                 let texture_offset_u: f32 =
                     self.current_px_offset.x as f32 / self.texture_row_size as f32;
                 let texture_offset_v: f32 =
                     self.current_px_offset.y as f32 / self.texture_rows as f32;
-                eprintln!(
-                    "texture_offset_u: {}; texture_offset_v: {}",
-                    texture_offset_u, texture_offset_v
-                );
 
                 let px_bounds: GlyphPxBounds = px_bounds.into();
                 let uv_bounds: GlyphUvBounds = GlyphUvBounds::new(
@@ -449,13 +440,28 @@ impl GlyphCache {
         }
     }
 
-    fn recache_glyphs(&mut self) {
-        let cached_glyphs: Vec<GlyphData> = self.cached_glyphs.drain(..).collect();
-        self.current_px_offset = cgmath::Point2 { x: 0, y: 0 };
-        self.max_x_assigned = 0;
-        self.max_y_assigned = 0;
-        for glyph in cached_glyphs {
-            self.ensure_glyph_cached(glyph.font_idx, glyph.character, glyph.px_scale);
+    fn recache_glyph_vertices(&mut self) {
+        for glyph_data in &mut self.cached_glyphs {
+            let font = &self.cached_fonts[glyph_data.font_idx].font;
+            let glyph = glyph_data
+                .glyph_id
+                .with_scale(glyph_data.px_scale.to_ab_glyph_px_scale());
+            if let Some(g) = font.outline_glyph(glyph) {
+                let px_bounds: GlyphPxBounds = g.px_bounds().into();
+
+                let surface_width_px = self.surface_width as f32;
+                let surface_height_px = self.surface_height as f32;
+
+                let left = px_bounds.min.x / surface_width_px;
+                let right = px_bounds.max.x / surface_width_px;
+                let top = px_bounds.min.y / surface_height_px;
+                let bottom = px_bounds.max.y / surface_height_px;
+
+                glyph_data.vertices[0].position = [left, top, 0.0];
+                glyph_data.vertices[1].position = [left, bottom, 0.0];
+                glyph_data.vertices[2].position = [right, bottom, 0.0];
+                glyph_data.vertices[3].position = [right, top, 0.0];
+            }
         }
     }
 
