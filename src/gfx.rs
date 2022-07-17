@@ -293,6 +293,15 @@ impl GfxState {
             self.config.width = new_size_apply.width;
             self.config.height = new_size_apply.height;
             self.surface.configure(&self.device, &self.config);
+
+            let surface_dimensions_px_uniform = SurfaceDimensionsPxUniform {
+                surface_dimensions_px: [new_size_apply.width as f32, new_size_apply.height as f32],
+            };
+            self.queue.write_buffer(
+                &self.surface_dimensions_buffer,
+                0,
+                bytemuck::cast_slice(&[surface_dimensions_px_uniform]),
+            );
             self.glyph_cache
                 .surface_resized(new_size_apply.width, new_size_apply.height);
         }
