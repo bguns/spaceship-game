@@ -7,7 +7,7 @@ use winit::window::Window;
 
 use crate::error::Result;
 use glyph_cache::GlyphCache;
-use vertex::{LineVertex, Vertex};
+use vertex::{GlyphVertex, LineVertex};
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -71,80 +71,6 @@ impl GfxState {
 
         surface.configure(&device, &config);
 
-        let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
-            label: Some("Glyph Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
-
-        let mut glyph_cache =
-            GlyphCache::new(&device, size.width, size.height, screen_scale_factor);
-
-        let render_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Glyph Render Pipeline Layout"),
-                bind_group_layouts: &[&glyph_cache.texture_bind_group_layout],
-                push_constant_ranges: &[],
-            });
-
-        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Render Pipeline"),
-            layout: Some(&render_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: "vs_main",
-                // What type of vertices we want to pass to the vertex shader.
-                buffers: &[Vertex::desc()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: "fs_main",
-                targets: &[wgpu::ColorTargetState {
-                    format: config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                }],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
-                polygon_mode: wgpu::PolygonMode::Fill,
-                // Requires Features::DEPTH_CLIP_CONTROL
-                unclipped_depth: false,
-                // Requires Features::CONSERVATIVE_RASTERIZATION
-                conservative: false,
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            multiview: None,
-        });
-
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("glyph_vertex_buffer"),
-            size: (4000 as usize * std::mem::size_of::<Vertex>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let glyph_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("glyph_index_buffer"),
-            size: (6000 as usize * std::mem::size_of::<u16>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let font_path_1 = std::path::PathBuf::from("./fonts/cascadia-code/Cascadia.ttf");
-        let _ = glyph_cache.cache_font(font_path_1);
-
-        let font_path_2 = std::path::PathBuf::from("./fonts/westwood-studio/Westwood Studio.ttf");
-        let _ = glyph_cache.cache_font(font_path_2);
-
         let surface_dimensions_px_uniform = SurfaceDimensionsPxUniform {
             surface_dimensions_px: [size.width as f32, size.height as f32],
         };
@@ -179,6 +105,83 @@ impl GfxState {
             }],
             label: Some("surface_dimensions_bind_group"),
         });
+
+        let shader = device.create_shader_module(&wgpu::ShaderModuleDescriptor {
+            label: Some("Glyph Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+        });
+
+        let mut glyph_cache =
+            GlyphCache::new(&device, size.width, size.height, screen_scale_factor);
+
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Glyph Render Pipeline Layout"),
+                bind_group_layouts: &[
+                    &surface_dimensions_bind_group_layout,
+                    &glyph_cache.texture_bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            });
+
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: "vs_main",
+                // What type of vertices we want to pass to the vertex shader.
+                buffers: &[GlyphVertex::desc()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: "fs_main",
+                targets: &[wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                }],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+        });
+
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("glyph_vertex_buffer"),
+            size: (4000 as usize * std::mem::size_of::<GlyphVertex>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let glyph_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("glyph_index_buffer"),
+            size: (6000 as usize * std::mem::size_of::<u16>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let font_path_1 = std::path::PathBuf::from("./fonts/cascadia-code/Cascadia.ttf");
+        let _ = glyph_cache.cache_font(font_path_1);
+
+        let font_path_2 = std::path::PathBuf::from("./fonts/westwood-studio/Westwood Studio.ttf");
+        let _ = glyph_cache.cache_font(font_path_2);
 
         let line_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("line_vertex_buffer"),
@@ -367,19 +370,19 @@ impl GfxState {
                 .try_get_cached_glyph_data(0, 'b', px_scale)
                 .unwrap();
 
-            let mut vertices: Vec<Vertex> = Vec::with_capacity(4000);
-            let mut indices: Vec<u16> = Vec::with_capacity(6000);
+            let mut glyph_vertices: Vec<GlyphVertex> = Vec::with_capacity(4000);
+            let mut glyph_indices: Vec<u16> = Vec::with_capacity(6000);
 
             self.glyph_cache.prepare_draw_for_glyph(
-                &mut vertices,
-                &mut indices,
+                &mut glyph_vertices,
+                &mut glyph_indices,
                 a_glyph,
                 -1.0 + self.logical_px_to_horizontal_screen_space_offset(256),
                 1.0 - self.logical_px_to_vertical_screen_space_offset(256),
             );
             self.glyph_cache.prepare_draw_for_glyph(
-                &mut vertices,
-                &mut indices,
+                &mut glyph_vertices,
+                &mut glyph_indices,
                 b_glyph,
                 -1.0 + self.logical_px_to_horizontal_screen_space_offset(256)
                     + 2.0 * self.glyph_cache.get_logical_caret_h_advance(a_glyph, None),
@@ -396,8 +399,8 @@ impl GfxState {
                     px_scale,
                     &mut caret_x,
                     &mut caret_y,
-                    &mut vertices,
-                    &mut indices,
+                    &mut glyph_vertices,
+                    &mut glyph_indices,
                 );
             }
 
@@ -422,32 +425,36 @@ impl GfxState {
                 px_scale,
                 &mut caret_x,
                 &mut caret_y,
-                &mut vertices,
-                &mut indices,
+                &mut glyph_vertices,
+                &mut glyph_indices,
             );
 
-            let old_vertices_len = vertices.len() as u16;
+            let old_vertices_len = glyph_vertices.len() as u16;
 
-            vertices.append(&mut vec![
-                Vertex {
-                    position: [0.0, 0.0, 0.0],
+            glyph_vertices.append(&mut vec![
+                GlyphVertex {
+                    caret_position: [0.0, 0.0, 0.0],
+                    px_bounds_offset: [0.0, 0.0],
                     tex_coords: [0.0, 0.0],
                 },
-                Vertex {
-                    position: [0.0, -1.0, 0.0],
+                GlyphVertex {
+                    caret_position: [0.0, -1.0, 0.0],
+                    px_bounds_offset: [0.0, 0.0],
                     tex_coords: [0.0, 1.0],
                 },
-                Vertex {
-                    position: [1.0, -1.0, 0.0],
+                GlyphVertex {
+                    caret_position: [1.0, -1.0, 0.0],
+                    px_bounds_offset: [0.0, 0.0],
                     tex_coords: [1.0, 1.0],
                 },
-                Vertex {
-                    position: [1.0, 0.0, 0.0],
+                GlyphVertex {
+                    caret_position: [1.0, 0.0, 0.0],
+                    px_bounds_offset: [0.0, 0.0],
                     tex_coords: [1.0, 0.0],
                 },
             ]);
 
-            indices.append(&mut vec![
+            glyph_indices.append(&mut vec![
                 0 + old_vertices_len,
                 1 + old_vertices_len,
                 2 + old_vertices_len,
@@ -456,18 +463,25 @@ impl GfxState {
                 0 + old_vertices_len,
             ]);
 
-            self.queue
-                .write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+            self.queue.write_buffer(
+                &self.vertex_buffer,
+                0,
+                bytemuck::cast_slice(&glyph_vertices),
+            );
 
-            self.queue
-                .write_buffer(&self.glyph_index_buffer, 0, bytemuck::cast_slice(&indices));
+            self.queue.write_buffer(
+                &self.glyph_index_buffer,
+                0,
+                bytemuck::cast_slice(&glyph_indices),
+            );
 
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_bind_group(0, &self.glyph_cache.texture_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.surface_dimensions_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.glyph_cache.texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass
                 .set_index_buffer(self.glyph_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
-            render_pass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+            render_pass.draw_indexed(0..glyph_indices.len() as u32, 0, 0..1);
         }
 
         // begin_render_pass borrows encoder mutably, so we need to make sure that the borrow
@@ -579,58 +593,6 @@ impl GfxState {
                     thickness: 10.0,
                     miter_dir: -1.0,
                 },
-                /*LineVertex {
-                    position: [0.0, 0.0, 0.0],
-                    previous_point: [-2.0, -2.0, -2.0],
-                    next_point: [0.5, 0.5, 0.0],
-                    thickness: 0.1,
-                },
-                LineVertex {
-                    position: [0.5, 0.5, 0.0],
-                    previous_point: [0.0, 0.0, 0.0],
-                    next_point: [2.0, 2.0, 2.0],
-                    thickness: 0.1,
-                },
-                LineVertex {
-                    position: [0.5, 0.0, 0.0],
-                    previous_point: [0.5, 0.5, 0.0],
-                    next_point: [2.0, 2.0, 2.0],
-                    thickness: 0.1,
-                },
-                LineVertex {
-                    position: [0.5, 0.5, 0.0],
-                    previous_point: [0.0, 0.0, 0.0],
-                    next_point: [0.5, 2.0, 2.0],
-                    thickness: 0.1,
-                },
-                Vertex {
-                    position: [-0.8, -0.4, 0.0],
-                    tex_coords: [0.0, 0.0],
-                },
-                Vertex {
-                    position: [-0.8, -0.4, 0.0],
-                    tex_coords: [0.0, 0.0],
-                },
-                Vertex {
-                    position: [-0.6, -0.4, 0.0],
-                    tex_coords: [0.0, 0.0],
-                },
-                Vertex {
-                    position: [-0.6, -0.4, 0.0],
-                    tex_coords: [0.0, 0.0],
-                },
-                Vertex {
-                    position: [-0.6, -0.2, 0.0],
-                    tex_coords: [0.0, 0.0],
-                },
-                Vertex {
-                    position: [-0.6, -0.2, 0.0],
-                    tex_coords: [0.0, 0.0],
-                },
-                Vertex {
-                    position: [-0.8, -0.2, 0.0],
-                    tex_coords: [0.0, 0.0],
-                },*/
             ];
 
             self.queue.write_buffer(
@@ -641,10 +603,7 @@ impl GfxState {
 
             render_pass.set_pipeline(&self.line_render_pipeline);
             render_pass.set_bind_group(0, &self.surface_dimensions_bind_group, &[]);
-            //render_pass.set_bind_group(0, &self.glyph_cache.texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
-            /*render_pass
-            .set_index_buffer(self.glyph_index_buffer.slice(..), wgpu::IndexFormat::Uint16);*/
             render_pass.draw(0..12, 0..1);
         }
 

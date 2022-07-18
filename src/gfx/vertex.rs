@@ -1,14 +1,17 @@
+use std::mem::size_of;
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Vertex {
-    pub position: [f32; 3],
+pub struct GlyphVertex {
+    pub caret_position: [f32; 3],
+    pub px_bounds_offset: [f32; 2],
     pub tex_coords: [f32; 2],
 }
 
-impl Vertex {
+impl GlyphVertex {
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Vertex>() as wgpu::BufferAddress,
+            array_stride: size_of::<GlyphVertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttribute {
@@ -18,21 +21,15 @@ impl Vertex {
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x2,
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     shader_location: 1,
                 },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: (size_of::<[f32; 3]>() + size_of::<[f32; 2]>()) as wgpu::BufferAddress,
+                    shader_location: 2,
+                },
             ],
-        }
-    }
-
-    pub fn offset(&self, x: f32, y: f32, z: f32) -> Self {
-        Vertex {
-            position: [
-                self.position[0] + x,
-                self.position[1] + y,
-                self.position[2] + z,
-            ],
-            tex_coords: self.tex_coords,
         }
     }
 }
@@ -50,7 +47,7 @@ pub struct LineVertex {
 impl LineVertex {
     pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
         wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<LineVertex>() as wgpu::BufferAddress,
+            array_stride: size_of::<LineVertex>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttribute {
@@ -60,23 +57,22 @@ impl LineVertex {
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x3,
-                    offset: std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     shader_location: 1,
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32x3,
-                    offset: 2 * std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    offset: 2 * size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     shader_location: 2,
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32,
-                    offset: 3 * std::mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    offset: 3 * size_of::<[f32; 3]>() as wgpu::BufferAddress,
                     shader_location: 3,
                 },
                 wgpu::VertexAttribute {
                     format: wgpu::VertexFormat::Float32,
-                    offset: (std::mem::size_of::<f32>() + 3 * std::mem::size_of::<[f32; 3]>())
-                        as wgpu::BufferAddress,
+                    offset: (size_of::<f32>() + 3 * size_of::<[f32; 3]>()) as wgpu::BufferAddress,
                     shader_location: 4,
                 },
             ],
