@@ -1,5 +1,10 @@
 TODO
 ====
 
+Lines:
+
 - Generate line vertices based on given sequence of points
 - Rounded/tapered corners for lines
+
+Glyphs:
+- When drawing a glyph, if there is already a glyph cached with a very similar px_scale (%-based?), select that glyph and scale the texture, instead of caching an entirely new glyph
