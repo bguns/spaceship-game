@@ -1,5 +1,5 @@
 TODO
 ====
 
-- I am recaching the glyph bounds ( = vertex "position") data when the surface dimensions change. It should be possible to pass positional data (caret position and glyph bounds) to the vertex shader, and let it handle scaling based on surface W/H.
-  * It is probably better to switch glyph vertex data from the generic Vertex to a more dedicated GlyphVertex of some sort.
+- Generate line vertices based on given sequence of points
+- Rounded/tapered corners for lines
