@@ -1,9 +1,12 @@
 TODO
 ====
 
-Lines:
+General:
+- Allow for rendering of polygon lines (wireframe) instead of fill, for debug purposes.
 
-- Generate line vertices based on given sequence of points
+Lines:
+- Indexed drawing of lines
+- Animate a moving multi-line
 - Rounded/tapered corners for lines
 
 Glyphs:

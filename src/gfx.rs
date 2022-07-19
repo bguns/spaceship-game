@@ -508,109 +508,102 @@ impl GfxState {
                 depth_stencil_attachment: None,
             });
 
-            let line_vertices: &[LineVertex] = &[
-                LineVertex {
-                    position: [0.0, 0.0, 0.0],
-                    previous_point: [-2.0, -2.0, 0.0],
-                    next_point: [0.5, 0.5, 0.0],
-                    thickness: 10.0,
-                    miter_dir: -1.0,
-                },
-                LineVertex {
-                    position: [0.0, 0.0, 0.0],
-                    previous_point: [-2.0, -2.0, 0.0],
-                    next_point: [0.5, 0.5, 0.0],
-                    thickness: 10.0,
-                    miter_dir: 1.0,
-                },
-                LineVertex {
-                    position: [0.5, 0.5, 0.0],
-                    previous_point: [0.0, 0.0, 0.0],
-                    next_point: [0.5, 0.0, 0.0],
-                    thickness: 10.0,
-                    miter_dir: 1.0,
-                },
-                LineVertex {
-                    position: [0.5, 0.5, 0.0],
-                    previous_point: [0.0, 0.0, 0.0],
-                    next_point: [0.5, 0.0, 0.0],
-                    thickness: 10.0,
-                    miter_dir: -1.0,
-                },
-                LineVertex {
-                    position: [0.5, 0.5, 0.0],
-                    previous_point: [0.0, 0.0, 0.0],
-                    next_point: [0.5, 0.0, 0.0],
-                    thickness: 10.0,
-                    miter_dir: 1.0,
-                },
-                LineVertex {
-                    position: [0.0, 0.0, 0.0],
-                    previous_point: [-2.0, -2.0, 0.0],
-                    next_point: [0.5, 0.5, 0.0],
-                    thickness: 10.0,
-                    miter_dir: -1.0,
-                },
-                LineVertex {
-                    position: [0.5, 0.5, 0.0],
-                    previous_point: [0.0, 0.0, 0.0],
-                    next_point: [0.5, 0.0, 0.0],
-                    thickness: 10.0,
-                    miter_dir: -1.0,
-                },
-                LineVertex {
-                    position: [0.5, 0.5, 0.0],
-                    previous_point: [0.0, 0.0, 0.0],
-                    next_point: [0.5, 0.0, 0.0],
-                    thickness: 10.0,
-                    miter_dir: 1.0,
-                },
-                LineVertex {
-                    position: [0.5, 0.0, 0.0],
-                    previous_point: [0.5, 0.5, 0.0],
-                    next_point: [2.0, 2.0, 0.0],
-                    thickness: 10.0,
-                    miter_dir: 1.0,
-                },
-                LineVertex {
-                    position: [0.5, 0.0, 0.0],
-                    previous_point: [0.5, 0.5, 0.0],
-                    next_point: [2.0, 2.0, 0.0],
-                    thickness: 10.0,
-                    miter_dir: -1.0,
-                },
-                LineVertex {
-                    position: [0.5, 0.0, 0.0],
-                    previous_point: [0.5, 0.5, 0.0],
-                    next_point: [2.0, 2.0, 0.0],
-                    thickness: 10.0,
-                    miter_dir: 1.0,
-                },
-                LineVertex {
-                    position: [0.5, 0.5, 0.0],
-                    previous_point: [0.0, 0.0, 0.0],
-                    next_point: [0.5, 0.0, 0.0],
-                    thickness: 10.0,
-                    miter_dir: -1.0,
-                },
-            ];
+            let line_vertices = Self::generate_line_vertices(
+                &vec![
+                    [0.0, 0.0, 0.0],
+                    [0.5, 0.5, 0.0],
+                    [0.5, 0.0, 0.0],
+                    [0.75, 0.5, 0.0],
+                    [0.75, 0.0, 0.0],
+                ],
+                10.0,
+            );
 
             self.queue.write_buffer(
                 &self.line_vertex_buffer,
                 0,
-                bytemuck::cast_slice(line_vertices),
+                bytemuck::cast_slice(&line_vertices[..]),
             );
 
             render_pass.set_pipeline(&self.line_render_pipeline);
             render_pass.set_bind_group(0, &self.surface_dimensions_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
-            render_pass.draw(0..12, 0..1);
+            render_pass.draw(0..line_vertices.len() as u32, 0..1);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())
+    }
+
+    fn generate_line_vertices(positions: &Vec<[f32; 3]>, thickness: f32) -> Vec<LineVertex> {
+        assert!(positions.len() > 1);
+
+        let mut vertices: Vec<LineVertex> = Vec::with_capacity((positions.len() - 1) * 6);
+
+        for i in 0..positions.len() - 1 {
+            let position = positions[i];
+
+            let previous_point = if i > 0 {
+                positions[i - 1]
+            } else {
+                [-2.0, -2.0, 0.0]
+            };
+
+            let next_point = positions[i + 1];
+
+            let next_next_point = if i < positions.len() - 2 {
+                positions[i + 2]
+            } else {
+                [2.0, 2.0, 0.0]
+            };
+
+            vertices.push(LineVertex {
+                position,
+                previous_point,
+                next_point,
+                thickness,
+                miter_dir: -1.0,
+            });
+            vertices.push(LineVertex {
+                position,
+                previous_point,
+                next_point,
+                thickness,
+                miter_dir: 1.0,
+            });
+            vertices.push(LineVertex {
+                position: next_point,
+                previous_point: position,
+                next_point: next_next_point,
+                thickness,
+                miter_dir: 1.0,
+            });
+            vertices.push(LineVertex {
+                position: next_point,
+                previous_point: position,
+                next_point: next_next_point,
+                thickness,
+                miter_dir: -1.0,
+            });
+            vertices.push(LineVertex {
+                position: next_point,
+                previous_point: position,
+                next_point: next_next_point,
+                thickness,
+                miter_dir: 1.0,
+            });
+            vertices.push(LineVertex {
+                position,
+                previous_point,
+                next_point,
+                thickness,
+                miter_dir: -1.0,
+            });
+        }
+
+        vertices
     }
 
     fn logical_px_to_horizontal_screen_space_offset(&self, logical_px_offset: u32) -> f32 {
