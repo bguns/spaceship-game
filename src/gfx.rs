@@ -508,7 +508,7 @@ impl GfxState {
                 depth_stencil_attachment: None,
             });
 
-            let line_vertices = Self::generate_line_vertices(
+            /*let line_vertices = Self::generate_line_vertices(
                 &vec![
                     [0.0, 0.0, 0.0],
                     [0.5, 0.5, 0.0],
@@ -517,7 +517,14 @@ impl GfxState {
                     [0.75, 0.0, 0.0],
                 ],
                 10.0,
-            );
+            );*/
+
+            let line_vertices: Vec<LineVertex> = if let Some(multiline) = game_state.test_multiline
+            {
+                Self::generate_line_vertices(&Vec::from(multiline), 10.0)
+            } else {
+                Vec::new()
+            };
 
             self.queue.write_buffer(
                 &self.line_vertex_buffer,

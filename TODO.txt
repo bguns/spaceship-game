@@ -2,6 +2,7 @@ TODO
 ====
 
 General:
+- Remove test line stuff that requires surface dimension / aspect ratio stuff in game_state.update()
 - Allow for rendering of polygon lines (wireframe) instead of fill, for debug purposes.
 
 Lines:

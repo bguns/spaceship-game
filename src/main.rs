@@ -11,11 +11,16 @@ use winit::{
     window::WindowBuilder,
 };
 
-use std::time::{Duration, Instant};
+use std::{
+    f32::consts::PI,
+    time::{Duration, Instant},
+};
 
 use crate::error::{GameError, Result};
 use crate::gfx::GfxState;
 use crate::input::KeyboardState;
+
+use cgmath::prelude::*;
 
 pub struct GameState {
     start_time: Instant,
@@ -25,11 +30,12 @@ pub struct GameState {
     frame_number: u64,
     keyboard_state: KeyboardState,
     text: Option<String>,
+    test_multiline: Option<[[f32; 3]; 5]>,
     should_quit: bool,
 }
 
 impl GameState {
-    pub fn update(&mut self, now: Instant) -> Result<()> {
+    pub fn update(&mut self, now: Instant, surface_size_x: f32, surface_size_y: f32) -> Result<()> {
         self.delta_time = now - self.now;
         self.run_time += self.delta_time;
         self.now = now;
@@ -46,6 +52,7 @@ impl GameState {
             (self.frame_number / 2) as usize,
         );
         self.text = Some("Arrrrrrrrrrrrriverderci!"[0..slice_end].to_string());
+        self.test_multiline = Some(get_multiline(self.run_time, surface_size_x, surface_size_y));
         Ok(())
     }
 }
@@ -65,6 +72,7 @@ fn main() -> Result<()> {
         frame_number: 0,
         keyboard_state,
         text: Some("Arrrrrrrrrrrrriverderci!".to_string()),
+        test_multiline: Some(get_multiline(Duration::from_millis(0), 1440.0, 990.0)),
         should_quit: false,
     };
 
@@ -100,7 +108,13 @@ fn main() -> Result<()> {
             if now - previous_frame_start < sixteen_millis {
                 *control_flow = ControlFlow::WaitUntil(previous_frame_start + sixteen_millis)
             } else {
-                game_state.update(now).unwrap();
+                game_state
+                    .update(
+                        now,
+                        window.inner_size().width as f32,
+                        window.inner_size().height as f32,
+                    )
+                    .unwrap();
                 match gfx_state.render(&game_state) {
                     Ok(_) => {}
                     // Reconfigure the surface if lost
@@ -129,4 +143,34 @@ fn main() -> Result<()> {
     });
 
     Ok(())
+}
+
+fn get_multiline(run_time: Duration, surface_size_x: f32, surface_size_y: f32) -> [[f32; 3]; 5] {
+    let runtime_seconds: f32 = run_time.as_millis() as f32 / 1000.0;
+
+    let t = runtime_seconds * 2.0;
+
+    let moving_x_one = 0.25 + 0.125 * t.sin();
+    let moving_x_two = 0.5 + 0.125 * t.cos();
+
+    let rotation: cgmath::Basis2<f32> = Rotation2::from_angle(cgmath::Rad(2.0 * PI * (t / 4.0)));
+    let rotated_vector = rotation.rotate_vector(cgmath::Vector2::unit_x());
+
+    let first = [0.0, 0.0, 0.0];
+    let second = [moving_x_one, 0.5, 0.0];
+    //let second = [0.5, 0.5, 0.0];
+    let third = [moving_x_one, 0.0, 0.0];
+    //let third = [0.5, 0.0, 0.0];
+    let fourth = [moving_x_two, 0.5, 0.0];
+    //let fourth = [0.75, 0.5, 0.0];
+
+    let aspect_ratio = surface_size_x / surface_size_y;
+
+    let fifth = [
+        moving_x_two + (0.125 * rotated_vector.x) * 1440.0 / 990.0,
+        0.5 + (0.125 * aspect_ratio * rotated_vector.y) * 1440.0 / 990.0,
+        0.0,
+    ];
+
+    [first, second, third, fourth, fifth]
 }
