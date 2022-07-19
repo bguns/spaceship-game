@@ -6,6 +6,7 @@ General:
 
 Lines:
 - Indexed drawing of lines
+- Add functionality to allow for looping line segment (last point connects to first point)
 - Animate a moving multi-line
 - Rounded/tapered corners for lines
 
