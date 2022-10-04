@@ -521,7 +521,7 @@ impl GfxState {
 
             let line_vertices: Vec<LineVertex> = if let Some(multiline) = game_state.test_multiline
             {
-                Self::generate_line_vertices(&Vec::from(multiline), 10.0)
+                self.generate_line_vertices(&Vec::from(multiline), 10.0)
             } else {
                 Vec::new()
             };
@@ -544,10 +544,11 @@ impl GfxState {
         Ok(())
     }
 
-    fn generate_line_vertices(positions: &Vec<[f32; 3]>, thickness: f32) -> Vec<LineVertex> {
+    fn generate_line_vertices(&self, positions: &Vec<[f32; 3]>, thickness: f32) -> Vec<LineVertex> {
         assert!(positions.len() > 1);
 
         let mut vertices: Vec<LineVertex> = Vec::with_capacity((positions.len() - 1) * 6);
+        let scaled_thickness: f32 = thickness * self.screen_scale_factor;
 
         for i in 0..positions.len() - 1 {
             let position = positions[i];
@@ -570,42 +571,42 @@ impl GfxState {
                 position,
                 previous_point,
                 next_point,
-                thickness,
+                thickness: scaled_thickness,
                 miter_dir: -1.0,
             });
             vertices.push(LineVertex {
                 position,
                 previous_point,
                 next_point,
-                thickness,
+                thickness: scaled_thickness,
                 miter_dir: 1.0,
             });
             vertices.push(LineVertex {
                 position: next_point,
                 previous_point: position,
                 next_point: next_next_point,
-                thickness,
+                thickness: scaled_thickness,
                 miter_dir: 1.0,
             });
             vertices.push(LineVertex {
                 position: next_point,
                 previous_point: position,
                 next_point: next_next_point,
-                thickness,
+                thickness: scaled_thickness,
                 miter_dir: -1.0,
             });
             vertices.push(LineVertex {
                 position: next_point,
                 previous_point: position,
                 next_point: next_next_point,
-                thickness,
+                thickness: scaled_thickness,
                 miter_dir: 1.0,
             });
             vertices.push(LineVertex {
                 position,
                 previous_point,
                 next_point,
-                thickness,
+                thickness: scaled_thickness,
                 miter_dir: -1.0,
             });
         }
