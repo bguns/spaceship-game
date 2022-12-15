@@ -442,7 +442,6 @@ impl GlyphCache {
 
     pub fn queue_write_texture_if_changed(&mut self, queue: &wgpu::Queue) {
         if self.texture_data_dirty {
-            eprintln!("Writing texture data to texture.");
             queue.write_texture(
                 wgpu::ImageCopyTexture {
                     texture: &self.texture,
