@@ -63,21 +63,6 @@ fn main() -> Result<()> {
     let device_state = DeviceState::new();
     let keyboard_state = KeyboardState::new(device_state);
 
-    let now = Instant::now();
-    let mut game_state = GameState {
-        start_time: now,
-        now,
-        delta_time: Duration::from_millis(0),
-        run_time: Duration::from_millis(0),
-        frame_number: 0,
-        keyboard_state,
-        text: Some("Arrrrrrrrrrrrriverderci!".to_string()),
-        test_multiline: Some(get_multiline(Duration::from_millis(0), 1440.0, 990.0)),
-        should_quit: false,
-    };
-
-    let sixteen_millis = Duration::from_millis(16);
-
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_title("Game")
@@ -87,6 +72,25 @@ fn main() -> Result<()> {
         .unwrap();
 
     let mut gfx_state = GfxState::new(&window);
+
+    let now = Instant::now();
+    let mut game_state = GameState {
+        start_time: now,
+        now,
+        delta_time: Duration::from_millis(0),
+        run_time: Duration::from_millis(0),
+        frame_number: 0,
+        keyboard_state,
+        text: Some("Arrrrrrrrrrrrriverderci!".to_string()),
+        test_multiline: Some(get_multiline(
+            Duration::from_millis(0),
+            window.inner_size().width as f32,
+            window.inner_size().height as f32,
+        )),
+        should_quit: false,
+    };
+
+    let sixteen_millis = Duration::from_millis(16);
 
     event_loop.run(move |event, _, control_flow| match event {
         Event::WindowEvent {
@@ -153,8 +157,11 @@ fn get_multiline(run_time: Duration, surface_size_x: f32, surface_size_y: f32) -
     let moving_x_one = 0.25 + 0.125 * t.sin();
     let moving_x_two = 0.5 + 0.125 * t.cos();
 
+    let aspect_ratio = surface_size_x / surface_size_y;
+
     let rotation: cgmath::Basis2<f32> = Rotation2::from_angle(cgmath::Rad(2.0 * PI * (t / 4.0)));
-    let rotated_vector = rotation.rotate_vector(cgmath::Vector2::unit_x());
+    let mut rotated_vector = rotation.rotate_vector(cgmath::Vector2::unit_x());
+    rotated_vector.x /= aspect_ratio;
 
     let first = [0.0, 0.0, 0.0];
     let second = [moving_x_one, 0.5, 0.0];
@@ -164,11 +171,9 @@ fn get_multiline(run_time: Duration, surface_size_x: f32, surface_size_y: f32) -
     let fourth = [moving_x_two, 0.5, 0.0];
     //let fourth = [0.75, 0.5, 0.0];
 
-    let aspect_ratio = surface_size_x / surface_size_y;
-
     let fifth = [
-        moving_x_two + (0.125 * rotated_vector.x) * 1440.0 / 990.0,
-        0.5 + (0.125 * aspect_ratio * rotated_vector.y) * 1440.0 / 990.0,
+        moving_x_two + (0.125 * rotated_vector.x),
+        0.5 + (0.125 * rotated_vector.y),
         0.0,
     ];
 
