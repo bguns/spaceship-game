@@ -6,7 +6,6 @@ General:
 - Allow for rendering of polygon lines (wireframe) instead of fill, for debug purposes.
 
 Lines:
-- Thickness should account for scale factor
 - Indexed drawing of lines
 - Add functionality to allow for looping line segment (last point connects to first point)
 - Animate a moving multi-line
