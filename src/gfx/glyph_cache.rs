@@ -186,13 +186,14 @@ impl GlyphCache {
             depth_or_array_layers: 1,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label,
+            label: label,
             size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::R8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
         });
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -443,17 +444,17 @@ impl GlyphCache {
     pub fn queue_write_texture_if_changed(&mut self, queue: &wgpu::Queue) {
         if self.texture_data_dirty {
             queue.write_texture(
-                wgpu::ImageCopyTexture {
+                wgpu::TexelCopyTextureInfo {
                     texture: &self.texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
                 &self.texture_data,
-                wgpu::ImageDataLayout {
+                wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: std::num::NonZeroU32::new(self.texture_row_size as u32),
-                    rows_per_image: std::num::NonZeroU32::new(self.texture_rows as u32),
+                    bytes_per_row: Some(self.texture_row_size as u32),
+                    rows_per_image: Some(self.texture_rows as u32),
                 },
                 wgpu::Extent3d {
                     width: self.texture_row_size as u32,

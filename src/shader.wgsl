@@ -1,22 +1,23 @@
 // Vertex shader
 struct SurfaceDimensionsUniform {
-    px: vec2<f32>;
-};
-[[group(0), binding(0)]]
+    px: vec2<f32>
+}
+
+@group(0) @binding(0)
 var<uniform> surface_dimensions: SurfaceDimensionsUniform;
 
 struct GlyphVertexInput {
-    [[location(0)]] caret_position: vec3<f32>;
-    [[location(1)]] px_bounds_offset: vec2<f32>;
-    [[location(2)]] tex_coords: vec2<f32>;
-};
+    @location(0) caret_position: vec3<f32>,
+    @location(1) px_bounds_offset: vec2<f32>,
+    @location(2) tex_coords: vec2<f32>
+}
 
 struct VertexOutput {
-    [[builtin(position)]] clip_position: vec4<f32>;
-    [[location(0)]] tex_coords: vec2<f32>;
-};
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) tex_coords: vec2<f32>
+}
 
-[[stage(vertex)]]
+@vertex
 fn vs_main(
     model: GlyphVertexInput,
 ) -> VertexOutput {
@@ -33,14 +34,14 @@ fn vs_main(
 }
 
 // Fragment shader
-[[group(1), binding(0)]]
+@group(1) @binding(0)
 var t_diffuse: texture_2d<f32>;
-[[group(1), binding(1)]]
+@group(1) @binding(1)
 var s_diffuse: sampler;
 
-[[stage(fragment)]]
+@fragment
 fn fs_main(
     in: VertexOutput,
-) -> [[location(0)]] vec4<f32> {
+) -> @location(0) vec4<f32> {
     return vec4<f32>(0.8, 0.8, 0.8, textureSample(t_diffuse, s_diffuse, in.tex_coords).r);
 }

@@ -1,18 +1,18 @@
 [package]
 name = "game"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 #crossterm = "0.23.2"
-winit = "0.26"
+winit = "0.30.12"
 device_query = "1.1"
-env_logger = "0.9"
+env_logger = "0.10"
 log = "0.4"
-wgpu = "0.12"
-pollster = "0.2.5"
+wgpu = "27.0.1"
+pollster = "0.3"
 bytemuck = { version = "1.9.1", features = ["derive"] }
 image = "0.24.2"
 cgmath = "0.18.0"

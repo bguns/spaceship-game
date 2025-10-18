@@ -5,14 +5,16 @@ mod input;
 use device_query::{DeviceState, Keycode};
 
 use winit::{
+    application::ApplicationHandler,
     dpi::LogicalSize,
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
+    event::WindowEvent,
+    event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    window::{Window, WindowId},
 };
 
 use std::{
     f32::consts::PI,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -57,94 +59,141 @@ impl GameState {
     }
 }
 
+#[derive(Default)]
+struct App {
+    gfx_state: Option<GfxState>,
+    game_state: Option<GameState>,
+}
+
+impl App {
+    fn new() -> Self {
+        let device_state = DeviceState::new();
+        let keyboard_state = KeyboardState::new(device_state);
+        let now = Instant::now();
+        Self {
+            gfx_state: None,
+            game_state: Some(GameState {
+                start_time: now,
+                now,
+                delta_time: Duration::from_millis(0),
+                run_time: Duration::from_millis(0),
+                frame_number: 0,
+                keyboard_state,
+                text: Some("Arrrrrrrrrrrrriverderci!".to_string()),
+                test_multiline: None,
+                should_quit: false,
+            }),
+        }
+    }
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.gfx_state.is_none() {
+            let window_attributes = Window::default_attributes()
+                .with_title("Game")
+                .with_inner_size(LogicalSize::new(1440.0, 900.0));
+            let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
+            self.gfx_state = Some(GfxState::new(window.clone()));
+            self.game_state.as_mut().unwrap().test_multiline = Some(get_multiline(
+                Duration::from_millis(0),
+                window.inner_size().width as f32,
+                window.inner_size().height as f32,
+            ));
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        let gfx_state = match &mut self.gfx_state {
+            Some(state) => state,
+            None => return,
+        };
+
+        let game_state = match &mut self.game_state {
+            Some(state) => state,
+            None => return,
+        };
+
+        match event {
+            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(physical_size) => {
+                gfx_state.resize(Some(physical_size));
+            }
+            WindowEvent::RedrawRequested => gfx_state.render(game_state).unwrap(),
+            WindowEvent::ScaleFactorChanged { .. } => {
+                gfx_state.resize(None);
+            }
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let game_state = match &mut self.game_state {
+            Some(state) => state,
+            None => return,
+        };
+        let gfx_state = match &mut self.gfx_state {
+            Some(state) => state,
+            None => return,
+        };
+
+        let now = Instant::now();
+        let sixteen_millis = Duration::from_millis(16);
+        let previous_frame_start = game_state.now;
+        if now - previous_frame_start < sixteen_millis {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(
+                previous_frame_start + sixteen_millis,
+            ));
+        } else {
+            game_state
+                .update(
+                    now,
+                    gfx_state.window.inner_size().width as f32,
+                    gfx_state.window.inner_size().height as f32,
+                )
+                .unwrap();
+            gfx_state.window.request_redraw();
+            match gfx_state.render(&game_state) {
+                Ok(_) => {}
+                // Reconfigure the surface if lost
+                Err(GameError::WgpuError(wgpu::SurfaceError::Lost)) => gfx_state.resize(None),
+                // Out of graphics memory probably means we should quit.
+                Err(GameError::WgpuError(wgpu::SurfaceError::OutOfMemory)) => {
+                    event_loop.exit();
+                }
+                Err(e) => eprintln!("{:?}", e),
+            }
+
+            let elapsed = now.elapsed();
+
+            if elapsed < sixteen_millis {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(now + sixteen_millis - elapsed));
+            } else {
+                event_loop.set_control_flow(ControlFlow::Poll);
+            }
+
+            if game_state.should_quit {
+                event_loop.exit();
+            }
+        }
+    }
+}
+
 #[allow(unreachable_code)]
 fn main() -> Result<()> {
     env_logger::init();
-    let device_state = DeviceState::new();
-    let keyboard_state = KeyboardState::new(device_state);
 
-    let event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
-        .with_title("Game")
-        .with_inner_size(LogicalSize::new(1440.0, 900.0))
-        //.with_decorations(false)
-        .build(&event_loop)
-        .unwrap();
+    let event_loop = EventLoop::new().unwrap();
+    event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut gfx_state = GfxState::new(&window);
+    let mut app = App::new();
 
-    let now = Instant::now();
-    let mut game_state = GameState {
-        start_time: now,
-        now,
-        delta_time: Duration::from_millis(0),
-        run_time: Duration::from_millis(0),
-        frame_number: 0,
-        keyboard_state,
-        text: Some("Arrrrrrrrrrrrriverderci!".to_string()),
-        test_multiline: Some(get_multiline(
-            Duration::from_millis(0),
-            window.inner_size().width as f32,
-            window.inner_size().height as f32,
-        )),
-        should_quit: false,
-    };
-
-    let sixteen_millis = Duration::from_millis(16);
-
-    event_loop.run(move |event, _, control_flow| match event {
-        Event::WindowEvent {
-            ref event,
-            window_id,
-        } if window_id == window.id() => match event {
-            WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
-            WindowEvent::Resized(physical_size) => {
-                gfx_state.resize(Some(*physical_size));
-            }
-            WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                gfx_state.resize(Some(**new_inner_size));
-            }
-            _ => {}
-        },
-        Event::MainEventsCleared => {
-            let now = Instant::now();
-            let previous_frame_start = game_state.now;
-            if now - previous_frame_start < sixteen_millis {
-                *control_flow = ControlFlow::WaitUntil(previous_frame_start + sixteen_millis)
-            } else {
-                game_state
-                    .update(
-                        now,
-                        window.inner_size().width as f32,
-                        window.inner_size().height as f32,
-                    )
-                    .unwrap();
-                match gfx_state.render(&game_state) {
-                    Ok(_) => {}
-                    // Reconfigure the surface if lost
-                    Err(GameError::WgpuError(wgpu::SurfaceError::Lost)) => gfx_state.resize(None),
-                    // Out of graphics memory probably means we should quit.
-                    Err(GameError::WgpuError(wgpu::SurfaceError::OutOfMemory)) => {
-                        *control_flow = ControlFlow::Exit
-                    }
-                    Err(e) => eprintln!("{:?}", e),
-                }
-
-                let elapsed = now.elapsed();
-
-                if elapsed < sixteen_millis {
-                    *control_flow = ControlFlow::WaitUntil(now + sixteen_millis - elapsed);
-                } else {
-                    *control_flow = ControlFlow::Poll;
-                }
-
-                if game_state.should_quit {
-                    *control_flow = ControlFlow::Exit;
-                }
-            }
-        }
-        _ => {}
-    });
+    event_loop.run_app(&mut app).unwrap();
 
     Ok(())
 }

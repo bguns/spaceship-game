@@ -1,25 +1,25 @@
 // Vertex shader
 struct SurfaceDimensionsUniform {
-    px: vec2<f32>;
-};
+    px: vec2<f32>
+}
 
-[[group(0), binding(0)]]
+@group(0) @binding(0)
 var<uniform> surface_dimensions: SurfaceDimensionsUniform;
 
 struct LineVertexInput {
-    [[location(0)]] position: vec3<f32>;
-    [[location(1)]] previous_point: vec3<f32>;
-    [[location(2)]] next_point: vec3<f32>;
-    [[location(3)]] miter_dir: f32;
-    [[location(4)]] thickness: f32;
-};
+    @location(0) position: vec3<f32>,
+    @location(1) previous_point: vec3<f32>,
+    @location(2) next_point: vec3<f32>,
+    @location(3) miter_dir: f32,
+    @location(4) thickness: f32
+}
 
 struct LineVertexOutput {
-    [[builtin(position)]] clip_position: vec4<f32>;
-};
+    @builtin(position) clip_position: vec4<f32>
+}
 
 
-[[stage(vertex)]]
+@vertex
 fn vs_main(
     model: LineVertexInput,
 ) -> LineVertexOutput {
@@ -51,9 +51,9 @@ fn vs_main(
 
 // Fragment shader
 
-[[stage(fragment)]]
+@fragment
 fn fs_main(
     in: LineVertexOutput,
-) -> [[location(0)]] vec4<f32> {
+) -> @location(0) vec4<f32> {
     return vec4<f32>(1.0, 1.0, 1.0, 1.0);
 }
