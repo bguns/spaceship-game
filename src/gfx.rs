@@ -1,4 +1,5 @@
 mod glyph_cache;
+pub mod text;
 mod vertex;
 
 use std::sync::Arc;
@@ -434,10 +435,11 @@ impl GfxState {
 
             let fps = 1_000_000.0 / game_state.delta_time.as_micros() as f64;
             let fps_text = &format!(
-                "Elapsed time: {}; Runtime: {}; dt: {:.2}, Frame number: {}; FPS: {:.2}",
+                "Elapsed time: {}; Runtime: {}; dt: {:.2}, State number: {}, Frame number: {}; FPS: {:.2}",
                 game_state.start_time.elapsed().as_millis(),
                 game_state.run_time.as_millis(),
                 game_state.delta_time.as_micros() as f64 / 1_000.0,
+                game_state.state_number,
                 game_state.frame_number,
                 fps
             );
@@ -511,7 +513,7 @@ impl GfxState {
                 .set_index_buffer(self.glyph_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..glyph_indices.len() as u32, 0, 0..1);
         }
-
+        /*
         // begin_render_pass borrows encoder mutably, so we need to make sure that the borrow
         // is dropped before we can call encoder.finish()
         {
@@ -526,7 +528,7 @@ impl GfxState {
                         resolve_target: None,
                         // What to do with the colors on the view (i.e. the screen)
                         ops: wgpu::Operations {
-                            // Load tells wgpu how to handle colors stored from the previous frame (we clear the screen)
+                            // Load tells wgpu how to handle colors stored from the previous frame (keep what we have)
                             load: wgpu::LoadOp::Load,
                             // We want to store the rendered results to the (Surface)Texture behind the TextureView (the view)
                             store: wgpu::StoreOp::Store,
@@ -568,14 +570,18 @@ impl GfxState {
             render_pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
             render_pass.draw(0..line_vertices.len() as u32, 0..1);
         }
-
+        */
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())
     }
 
-    fn generate_line_vertices(&self, positions: &Vec<[f32; 3]>, thickness: f32) -> Vec<LineVertex> {
+    fn _generate_line_vertices(
+        &self,
+        positions: &Vec<[f32; 3]>,
+        thickness: f32,
+    ) -> Vec<LineVertex> {
         assert!(positions.len() > 1);
 
         let mut vertices: Vec<LineVertex> = Vec::with_capacity((positions.len() - 1) * 6);
