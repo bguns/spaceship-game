@@ -1,10 +1,12 @@
-use std::str::FromStr;
 mod error;
 mod gfx;
 mod input;
 
+use anyhow::Result;
+
 use device_query::{DeviceState, Keycode};
 
+use gfx::text::FontCache;
 use harfrust::{FontRef, Variation};
 use winit::{
     application::ApplicationHandler,
@@ -16,11 +18,12 @@ use winit::{
 
 use std::{
     f32::consts::PI,
+    str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use crate::error::{GameError, Result};
+use crate::error::GameError;
 use crate::gfx::GfxState;
 use crate::gfx::text::FontShaper;
 use crate::input::KeyboardState;
@@ -174,13 +177,15 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => match gfx_state.render(&game_state) {
                 Ok(_) => game_state.frame_number += 1,
-                // Reconfigure the surface if lost
-                Err(GameError::WgpuError(wgpu::SurfaceError::Lost)) => gfx_state.resize(None),
-                // Out of graphics memory probably means we should quit.
-                Err(GameError::WgpuError(wgpu::SurfaceError::OutOfMemory)) => {
-                    event_loop.exit();
-                }
-                Err(e) => eprintln!("{:?}", e),
+                Err(e) => match e.downcast_ref::<GameError>() {
+                    // Reconfigure the surface if lost
+                    Some(GameError::WgpuError(wgpu::SurfaceError::Lost)) => gfx_state.resize(None),
+                    // Out of graphics memory probably means we should quit.
+                    Some(GameError::WgpuError(wgpu::SurfaceError::OutOfMemory)) => {
+                        event_loop.exit()
+                    }
+                    _ => eprintln!("{:?}", e),
+                },
             },
             WindowEvent::ScaleFactorChanged { .. } => {
                 gfx_state.resize(None);
@@ -236,11 +241,8 @@ fn main() -> Result<()> {
     /*let font_data = std::fs::read(std::path::PathBuf::from(
         "./fonts/cascadia-code/Cascadia.ttf",
     )).unwrap();*/
-    let font_data = std::fs::read(std::path::PathBuf::from(
-        "./fonts/SourceSerifVariable-Roman.ttf",
-    ))
-    .unwrap();
-    let font_ref = FontRef::new(&font_data).unwrap();
+    let mut font_cache = FontCache::new();
+    let font_ref = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
     let mut font_face: FontShaper = FontShaper::new(
         font_ref,
         Some(&[Variation::from(("Weight", 400.0f32))]),

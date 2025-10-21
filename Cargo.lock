@@ -89,6 +89,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "anyhow"
+version = "1.0.100"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
+
+[[package]]
 name = "approx"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -668,6 +674,7 @@ name = "game"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "anyhow",
  "bytemuck",
  "cgmath",
  "device_query",
@@ -676,6 +683,9 @@ dependencies = [
  "image",
  "log",
  "pollster",
+ "skrifa",
+ "smallvec",
+ "thiserror 2.0.17",
  "wgpu",
  "winit",
 ]
@@ -1912,6 +1922,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.95",
+]
+
+[[package]]
+name = "skrifa"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c31071dedf532758ecf3fed987cdb4bd9509f900e026ab684b4ecb81ea49841"
+dependencies = [
+ "bytemuck",
+ "read-fonts",
 ]
 
 [[package]]

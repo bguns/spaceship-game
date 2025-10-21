@@ -8,7 +8,7 @@ use pollster::FutureExt as _;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::error::Result;
+use anyhow::Result;
 use glyph_cache::GlyphCache;
 use vertex::{GlyphVertex, LineVertex};
 
