@@ -238,13 +238,17 @@ impl ApplicationHandler for App {
 
 #[allow(unreachable_code)]
 fn main() -> Result<()> {
-    /*let font_data = std::fs::read(std::path::PathBuf::from(
-        "./fonts/cascadia-code/Cascadia.ttf",
-    )).unwrap();*/
     let mut font_cache = FontCache::new();
-    let font_ref = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
-    let mut font_face: FontShaper = FontShaper::new(
-        font_ref,
+    let source_serif = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
+    let cascadia = font_cache.load_font_file("./fonts/cascadia-code/Cascadia.ttf")?;
+    let _westwood = font_cache.load_font_file("./fonts/westwood-studio/Westwood Studio.ttf")?;
+    let _roboto = font_cache.load_font_file("./fonts/Roboto-Regular.ttf")?;
+    let _ = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
+
+    let source_serif_ref = font_cache.to_font_ref(&source_serif[0]);
+    //let cascadia_ref = font_cache.find_font("Cascadia", Some("Regular"))?;
+    /*let mut font_face: FontShaper = FontShaper::new(
+        source_serif_ref,
         Some(&[Variation::from(("Weight", 400.0f32))]),
         Some([
             harfrust::Feature::from_str("kern").unwrap(),
@@ -253,8 +257,10 @@ fn main() -> Result<()> {
     );
 
     let text = "fififi";
-    let _ = font_face.shape(text, None);
+    let _ = font_face.shape(text, None);*/
 
+    eprintln!("{}", source_serif_ref.pretty_print());
+    //eprintln!("{:?}", cascadia_ref.pretty_print());
     env_logger::init();
 
     let event_loop = EventLoop::new().unwrap();
