@@ -6,8 +6,8 @@ use anyhow::Result;
 
 use device_query::{DeviceState, Keycode};
 
-use gfx::text::FontCache;
 use harfrust::{FontRef, Variation};
+use rayon::ThreadPoolBuilder;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -25,6 +25,7 @@ use std::{
 
 use crate::error::GameError;
 use crate::gfx::GfxState;
+use crate::gfx::text::FontCache;
 use crate::gfx::text::FontShaper;
 use crate::input::KeyboardState;
 
@@ -199,7 +200,7 @@ impl ApplicationHandler for App {
             Some(state) => state,
             None => return,
         };
-        let gfx_state = match &mut self.gfx_state {
+        /*let gfx_state = match &mut self.gfx_state {
             Some(state) => state,
             None => return,
         };
@@ -228,39 +229,84 @@ impl ApplicationHandler for App {
             } else {
                 event_loop.set_control_flow(ControlFlow::Poll);
             }*/
+            */
 
-            if game_state.should_quit {
-                event_loop.exit();
-            }
+        if game_state.should_quit {
+            event_loop.exit();
+            //}
         }
     }
 }
 
 #[allow(unreachable_code)]
 fn main() -> Result<()> {
+    use font_kit::handle::Handle;
+    use font_kit::source::SystemSource;
+    use std::path::PathBuf;
+
+    ThreadPoolBuilder::default().build_global()?;
+
+    let system_fonts = SystemSource::new()
+        .all_fonts()
+        .iter()
+        .flatten()
+        .flat_map(|h| {
+            if let Handle::Path { path, .. } = h {
+                Some(path.clone())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<PathBuf>>();
+
     let mut font_cache = FontCache::new();
-    let source_serif = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
-    let cascadia = font_cache.load_font_file("./fonts/cascadia-code/Cascadia.ttf")?;
+
+    for font_path in system_fonts {
+        font_cache.load_font_file(font_path)?;
+    }
+
+    /*let cambriattc = font_cache.load_font_file("./fonts/cambria.ttc")?;
+    eprintln!("{:?}", cambriattc);
+    let cambriab = font_cache.load_font_file("./fonts/cambriab.ttf")?;
+    eprintln!("{:?}", cambriab);
+    let cambriai = font_cache.load_font_file("./fonts/cambriai.ttf")?;
+    eprintln!("{:?}", cambriai);
+    let cambriaz = font_cache.load_font_file("./fonts/cambriaz.ttf")?;
+    eprintln!("{:?}", cambriaz);*/
+
+    let _source_serif = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
+    eprintln!(
+        "{:?}",
+        font_cache.load_font_file("./fonts/cascadia-code/Cascadia.ttf")?
+    );
+    eprintln!(
+        "{:?}",
+        font_cache.load_font_file("./fonts/CascadiaCode-Regular.ttf")?
+    );
     let _westwood = font_cache.load_font_file("./fonts/westwood-studio/Westwood Studio.ttf")?;
     let _roboto = font_cache.load_font_file("./fonts/Roboto-Regular.ttf")?;
-    let _ = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
+    /*let _ = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
 
-    let source_serif_ref = font_cache.to_font_ref(&source_serif[0]);
-    //let cascadia_ref = font_cache.find_font("Cascadia", Some("Regular"))?;
+    eprintln!("{:?}", cascadia);
+    let source_serif_ref = font_cache.to_font_ref(&source_serif[0]);*/
+    eprintln!("{:?}", font_cache.search_fonts("cascadia code"));
+    eprintln!("{:?}", font_cache.search_fonts("times new roman"));
+    //eprintln!("{:?}", font_cache.search_fonts("cambria"));
+    //eprintln!("{:?}", font_cache.search_fonts("Yu Gothic"));
     /*let mut font_face: FontShaper = FontShaper::new(
-        source_serif_ref,
-        Some(&[Variation::from(("Weight", 400.0f32))]),
-        Some([
-            harfrust::Feature::from_str("kern").unwrap(),
-            harfrust::Feature::from_str("liga").unwrap(),
-        ]),
-    );
+            source_serif_ref,
+            Some(&[Variation::from(("Weight", 400.0f32))]),
+            Some([
+                harfrust::Feature::from_str("kern").unwrap(),
+                harfrust::Feature::from_str("liga").unwrap(),
+            ]),
+        );
+    h
+        let text = "fififi";
+        let _ = font_face.shape(text, None);*/
 
-    let text = "fififi";
-    let _ = font_face.shape(text, None);*/
-
-    eprintln!("{}", source_serif_ref.pretty_print());
-    //eprintln!("{:?}", cascadia_ref.pretty_print());
+    //eprintln!("{}", source_serif_ref.pretty_print());
+    //eprintln!("{:?}", cascadia_refs);
     env_logger::init();
 
     let event_loop = EventLoop::new().unwrap();
