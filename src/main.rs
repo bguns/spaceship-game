@@ -7,7 +7,6 @@ use anyhow::Result;
 use device_query::{DeviceState, Keycode};
 
 use harfrust::{FontRef, Variation};
-use rayon::ThreadPoolBuilder;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -244,8 +243,6 @@ fn main() -> Result<()> {
     use font_kit::source::SystemSource;
     use std::path::PathBuf;
 
-    ThreadPoolBuilder::default().build_global()?;
-
     let system_fonts = SystemSource::new()
         .all_fonts()
         .iter()
@@ -261,8 +258,17 @@ fn main() -> Result<()> {
 
     let mut font_cache = FontCache::new();
 
+    eprintln!(
+        "{:?}",
+        font_cache.load_font_file("./fonts/cascadia-code/Cascadia.ttf")
+    );
+    eprintln!(
+        "{:?}",
+        font_cache.load_font_file("./fonts/CascadiaCode-Regular.ttf")
+    );
+
     for font_path in system_fonts {
-        font_cache.load_font_file(font_path)?;
+        let _ = font_cache.load_font_file(font_path);
     }
 
     /*let cambriattc = font_cache.load_font_file("./fonts/cambria.ttc")?;
@@ -275,14 +281,7 @@ fn main() -> Result<()> {
     eprintln!("{:?}", cambriaz);*/
 
     let _source_serif = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
-    eprintln!(
-        "{:?}",
-        font_cache.load_font_file("./fonts/cascadia-code/Cascadia.ttf")?
-    );
-    eprintln!(
-        "{:?}",
-        font_cache.load_font_file("./fonts/CascadiaCode-Regular.ttf")?
-    );
+
     let _westwood = font_cache.load_font_file("./fonts/westwood-studio/Westwood Studio.ttf")?;
     let _roboto = font_cache.load_font_file("./fonts/Roboto-Regular.ttf")?;
     /*let _ = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
