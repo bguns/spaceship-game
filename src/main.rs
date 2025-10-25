@@ -1,6 +1,7 @@
 mod error;
 mod gfx;
 mod input;
+mod os;
 
 use anyhow::Result;
 
@@ -29,6 +30,8 @@ use crate::gfx::text::FontShaper;
 use crate::input::KeyboardState;
 
 use cgmath::prelude::*;
+
+use crate::os::windows::font_util;
 
 const SIXTEEN_MILLIS: Duration = Duration::from_millis(16);
 
@@ -239,7 +242,11 @@ impl ApplicationHandler for App {
 
 #[allow(unreachable_code)]
 fn main() -> Result<()> {
-    use font_kit::handle::Handle;
+    let system_fonts = font_util::load_system_font_paths()?;
+    /*for p in system_fonts {
+        eprintln!("{}", p.to_string_lossy());
+    }*/
+    /*use font_kit::handle::Handle;
     use font_kit::source::SystemSource;
     use std::path::PathBuf;
 
@@ -254,7 +261,7 @@ fn main() -> Result<()> {
                 None
             }
         })
-        .collect::<Vec<PathBuf>>();
+        .collect::<Vec<PathBuf>>();*/
 
     let mut font_cache = FontCache::new();
 
@@ -280,18 +287,18 @@ fn main() -> Result<()> {
     let cambriaz = font_cache.load_font_file("./fonts/cambriaz.ttf")?;
     eprintln!("{:?}", cambriaz);*/
 
-    let _source_serif = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
+    //let _source_serif = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
 
-    let _westwood = font_cache.load_font_file("./fonts/westwood-studio/Westwood Studio.ttf")?;
-    let _roboto = font_cache.load_font_file("./fonts/Roboto-Regular.ttf")?;
+    //let _westwood = font_cache.load_font_file("./fonts/westwood-studio/Westwood Studio.ttf")?;
+    //let _roboto = font_cache.load_font_file("./fonts/Roboto-Regular.ttf")?;
     /*let _ = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
 
     eprintln!("{:?}", cascadia);
     let source_serif_ref = font_cache.to_font_ref(&source_serif[0]);*/
     eprintln!("{:?}", font_cache.search_fonts("cascadia code"));
     eprintln!("{:?}", font_cache.search_fonts("times new roman"));
-    //eprintln!("{:?}", font_cache.search_fonts("cambria"));
-    //eprintln!("{:?}", font_cache.search_fonts("Yu Gothic"));
+    eprintln!("{:?}", font_cache.search_fonts("cambria"));
+    eprintln!("{:?}", font_cache.search_fonts("Yu Gothic"));
     /*let mut font_face: FontShaper = FontShaper::new(
             source_serif_ref,
             Some(&[Variation::from(("Weight", 400.0f32))]),
