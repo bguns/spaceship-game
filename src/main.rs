@@ -203,114 +203,55 @@ impl ApplicationHandler for App {
             Some(state) => state,
             None => return,
         };
-        /*let gfx_state = match &mut self.gfx_state {
-            Some(state) => state,
-            None => return,
-        };
-
-        let now = Instant::now();
-        let sixteen_millis = Duration::from_millis(16);
-        let previous_frame_start = game_state.now;
-        if now - previous_frame_start < sixteen_millis {
-            /*event_loop.set_control_flow(ControlFlow::WaitUntil(
-                previous_frame_start + sixteen_millis,
-            ));*/
-        } else {
-            game_state
-                .update(
-                    now,
-                    //gfx_state.window.inner_size().width as f32,
-                    //gfx_state.window.inner_size().height as f32,
-                )
-                .unwrap();
-            gfx_state.window.request_redraw();
-            /*let elapsed = now.elapsed();
-            if elapsed < sixteen_millis {
-                event_loop.set_control_flow(ControlFlow::WaitUntil(
-                    previous_frame_start + sixteen_millis - elapsed,
-                ));
-            } else {
-                event_loop.set_control_flow(ControlFlow::Poll);
-            }*/
-            */
 
         if game_state.should_quit {
             event_loop.exit();
-            //}
         }
     }
 }
 
 #[allow(unreachable_code)]
 fn main() -> Result<()> {
-    let system_fonts = font_util::load_system_font_paths()?;
-    /*for p in system_fonts {
-        eprintln!("{}", p.to_string_lossy());
-    }*/
-    /*use font_kit::handle::Handle;
-    use font_kit::source::SystemSource;
-    use std::path::PathBuf;
-
-    let system_fonts = SystemSource::new()
-        .all_fonts()
-        .iter()
-        .flatten()
-        .flat_map(|h| {
-            if let Handle::Path { path, .. } = h {
-                Some(path.clone())
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<PathBuf>>();*/
-
+    rayon::ThreadPoolBuilder::new().build_global()?;
+    //let system_fonts = font_util::load_system_font_paths()?;
     let mut font_cache = FontCache::new();
 
-    /*eprintln!(
-        "{:?}",
-        font_cache.load_font_file("./fonts/cascadia-code/Cascadia.ttf")
-    );
-    eprintln!(
-        "{:?}",
-        font_cache.load_font_file("./fonts/CascadiaCode-Regular.ttf")
-    );*/
-
-    /*let mut font_strings: Vec<String> = system_fonts
-        .iter()
-        .map(|p| p.to_string_lossy().to_ascii_uppercase())
-        .collect();
-    font_strings.sort();
-    for font_path in &font_strings {
-        eprintln!("{}", font_path)
-    }*/
     let timer = Instant::now();
+    /*let mut result = 0;
     for font_path in &system_fonts {
         let _ = font_cache.load_font_file(font_path);
+        result += 1;
+    }*/
+    let mut result = font_cache.load_system_fonts()?;
+
+    result.sort_by_key(|k| k.full_name());
+
+    for font in &result {
+        eprintln!("{}", font.pretty_print());
+        /*eprintln!(
+            "{}{}",
+            font.family_name(),
+            if let Some(sf) = font.subfamily_name() {
+                &format!(" - {sf}")
+            } else {
+                ""
+            }
+        );*/
     }
+
     eprintln!(
-        "cached {} system fonts in {} micros",
-        system_fonts.len(),
-        timer.elapsed().as_micros()
+        "cached {} system fonts in {} ms",
+        result.len(),
+        timer.elapsed().as_millis()
     );
 
-    /*let cambriattc = font_cache.load_font_file("./fonts/cambria.ttc")?;
-    eprintln!("{:?}", cambriattc);
-    let cambriab = font_cache.load_font_file("./fonts/cambriab.ttf")?;
-    eprintln!("{:?}", cambriab);
-    let cambriai = font_cache.load_font_file("./fonts/cambriai.ttf")?;
-    eprintln!("{:?}", cambriai);
-    let cambriaz = font_cache.load_font_file("./fonts/cambriaz.ttf")?;
-    eprintln!("{:?}", cambriaz);*/
+    //font_cache.list_fonts(true);
 
-    //let _source_serif = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
+    let source_serif = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
 
-    //let _westwood = font_cache.load_font_file("./fonts/westwood-studio/Westwood Studio.ttf")?;
-    //let _roboto = font_cache.load_font_file("./fonts/Roboto-Regular.ttf")?;
-    /*let _ = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
-
-    eprintln!("{:?}", cascadia);
-    let source_serif_ref = font_cache.to_font_ref(&source_serif[0]);*/
-    //eprintln!("{:?}", font_cache.search_fonts("cascadia code"));
+    // eprintln!("{:?}", cascadia);
+    // let source_serif_ref = font_cache.to_font_ref(&source_serif[0]);
+    // eprintln!("{:?}", font_cache.search_fonts("cascadia code"));
     //eprintln!("{:?}", font_cache.search_fonts("times new roman"));
     // eprintln!("{:?}", font_cache.search_fonts("cambria"));
     // eprintln!("{:?}", font_cache.search_fonts("Yu Gothic"));
@@ -330,12 +271,12 @@ fn main() -> Result<()> {
     //eprintln!("{:?}", cascadia_refs);
     env_logger::init();
 
-    /*let event_loop = EventLoop::new().unwrap();
+    let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = App::new();
 
-    event_loop.run_app(&mut app).unwrap();*/
+    event_loop.run_app(&mut app).unwrap();
 
     Ok(())
 }

@@ -3,18 +3,21 @@ use std::ffi::OsStr;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result};
 use harfrust::{
     Feature, GlyphBuffer, Language, Shaper, ShaperData, ShaperInstance, UnicodeBuffer, Variation,
 };
-
+use rayon::prelude::*;
 use skrifa::metrics::Metrics;
 use skrifa::raw::TableProvider;
 use skrifa::{Axis, prelude::*};
 use smallvec::SmallVec;
 use thiserror::Error;
+
+use crate::os::font_util;
 
 #[derive(Debug, Error)]
 enum FontError {
@@ -111,13 +114,6 @@ impl NamedInstanceInfo {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct FontInfo {
-    cache_index: usize,
-    pub family_name: String,
-    pub subfamily_name: Option<String>,
-}
-
 #[derive(Clone)]
 pub struct FontCacheRef<'a> {
     font_cache: &'a FontCache,
@@ -125,6 +121,21 @@ pub struct FontCacheRef<'a> {
 }
 
 impl<'a> FontCacheRef<'a> {
+    pub fn full_name(&'a self) -> String {
+        format!(
+            "{}{}",
+            &self.font_cache.font_datas[self.cache_index].family_name,
+            if let Some(sf) = self.font_cache.font_datas[self.cache_index]
+                .subfamily_name
+                .as_deref()
+            {
+                &format!(" - {}", sf)
+            } else {
+                ""
+            }
+        )
+    }
+
     pub fn family_name(&'a self) -> &'a str {
         &self.font_cache.font_datas[self.cache_index].family_name
     }
@@ -249,7 +260,7 @@ impl<'a> std::hash::Hash for FontCacheRef<'a> {
 
 struct FontCacheData {
     font_ref_idx: u32,
-    raw_data_range: std::ops::Range<usize>,
+    //raw_data_range: std::ops::Range<usize>,
     family_name: String,
     subfamily_name: Option<String>,
     revision: skrifa::raw::types::Fixed,
@@ -263,7 +274,7 @@ impl std::fmt::Debug for FontCacheData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FontCacheData")
             .field("font_ref_idx", &self.font_ref_idx)
-            .field("raw_data_range", &self.raw_data_range)
+            //.field("raw_data_range", &self.raw_data_range)
             .field("family_name", &self.family_name)
             .field("subfamily_name", &self.subfamily_name)
             .field("revision", &self.revision)
@@ -291,6 +302,33 @@ impl std::fmt::Debug for FontCacheData {
     }
 }
 
+enum RawCacheResult {
+    AlreadyCached {
+        path: PathBuf,
+        idxs: SmallVec<[usize; 16]>,
+    },
+    New {
+        path: PathBuf,
+        raw_data: Vec<u8>,
+        raw_data_hash: u64,
+        font_file_type: FontFileType,
+        font_datas: Vec<FontCacheData>,
+    },
+}
+
+pub enum CacheResult {
+    New {
+        path: PathBuf,
+        newly_cached: SmallVec<[usize; 16]>,
+        replaced: SmallVec<[usize; 16]>,
+    },
+    AlreadyCached {
+        path: PathBuf,
+        idxs: SmallVec<[usize; 16]>,
+    },
+    NoNewData(PathBuf),
+}
+
 pub struct FontCache {
     all_raw_data: Vec<u8>,
     raw_data_hashes_to_paths: HashMap<u64, PathBuf>,
@@ -316,20 +354,139 @@ impl FontCache {
         }
     }
 
-    pub fn load_font_file(&mut self, path: impl Into<PathBuf>) -> Result<Vec<FontInfo>> {
+    pub fn list_fonts(&self, show_path: bool) {
+        let mut fonts: Vec<String> = self
+            .font_datas
+            .iter()
+            .enumerate()
+            .map(|(i, font)| {
+                if show_path {
+                    let path = self
+                        .paths_to_font_idxs
+                        .iter()
+                        .find(|(_, v)| v.contains(&i))
+                        .unwrap()
+                        .0;
+                    format!(
+                        "{} - {} -- [{}]",
+                        font.family_name,
+                        font.subfamily_name.as_deref().unwrap_or("/"),
+                        path.to_string_lossy()
+                    )
+                } else {
+                    format!(
+                        "{} - {}",
+                        font.family_name,
+                        font.subfamily_name.as_deref().unwrap_or("/")
+                    )
+                }
+            })
+            .collect();
+
+        fonts.sort();
+
+        for font in fonts {
+            eprintln!("{}", font);
+        }
+    }
+
+    pub fn load_system_fonts<'a>(&'a mut self) -> Result<Vec<FontCacheRef<'a>>> {
+        let system_font_paths = font_util::load_system_font_paths()?;
+        self.load_multiple_font_files(system_font_paths)
+
+        /*let raw_data: Vec<Result<RawCacheResult>> = system_font_paths
+            .into_par_iter()
+            .map(|path| self.load_raw_data(path))
+            .collect();
+
+        raw_data
+            .into_iter()
+            .map(|raw_data| self.store_raw_data(raw_data))
+            .map(|results| {
+                results.map(|r| match r {
+                    CacheResult::New { newly_cached, .. } => newly_cached.len(),
+                    _ => 0,
+                })
+            })
+            .sum()*/
+    }
+
+    pub fn load_multiple_font_files<'a>(
+        &'a mut self,
+        paths: Vec<impl Into<PathBuf>>,
+    ) -> Result<Vec<FontCacheRef<'a>>> {
+        let result_count_heuristic = 2 * paths.len();
+        let raw_data: Vec<Result<RawCacheResult>> = paths
+            .into_iter()
+            .map(|path| path.into())
+            .collect::<Vec<PathBuf>>()
+            .into_par_iter()
+            .map(|path| self.load_raw_data(path))
+            .collect();
+
+        raw_data
+            .into_iter()
+            .map(|raw_data| self.store_raw_data(raw_data))
+            .map(|results| {
+                results.map(|r| match r {
+                    CacheResult::New {
+                        newly_cached,
+                        replaced,
+                        ..
+                    } => newly_cached
+                        .into_iter()
+                        .chain(replaced.into_iter())
+                        .collect::<SmallVec<[usize; 16]>>(),
+                    CacheResult::AlreadyCached { idxs, .. } => idxs,
+                    CacheResult::NoNewData(_) => SmallVec::new(),
+                })
+            })
+            .try_fold(
+                Vec::with_capacity(result_count_heuristic),
+                |mut unrolled, el| {
+                    unrolled.extend(el?);
+                    Ok(unrolled)
+                },
+            )
+            .map(|idxs| idxs.iter().map(|idx| self.to_font_ref(*idx)).collect())
+        /*.map(|r| {
+            r.map(|idxs| {
+                idxs.iter()
+                    .map(|idx| self.to_font_ref(*idx))
+                    .collect::<Vec<FontCacheRef<'a>>>()
+            })
+        })
+        .collect::<Result<Vec<Vec<FontCacheRef<'a>>>>>()
+        .into_iter()
+        .map(|frs| frs.into_iter().flatten().collect::<Vec<_>>())
+        .collect::<Result<Vec<_>>>()*/
+        //.collect::<Result<Vec<FontCacheRef<'a>>>>()
+    }
+
+    pub fn load_font_file<'a>(
+        &'a mut self,
+        path: impl Into<PathBuf>,
+    ) -> Result<Vec<FontCacheRef<'a>>> {
         let path: PathBuf = path.into();
         let indices = match self.paths_to_font_idxs.get(&path) {
             Some(idx) => idx.clone(),
-            None => self.cache_raw_data(&path)?,
+            None => match self.store_raw_data(self.load_raw_data(&path))? {
+                CacheResult::New {
+                    newly_cached,
+                    replaced,
+                    ..
+                } => newly_cached
+                    .into_iter()
+                    .chain(replaced.into_iter())
+                    .collect(),
+                CacheResult::AlreadyCached { idxs, .. } => idxs,
+                CacheResult::NoNewData(_) => SmallVec::new(),
+            },
         };
 
         Ok(indices
             .into_iter()
-            .map(|idx| FontInfo {
-                cache_index: idx,
-                family_name: self.font_datas[idx].family_name.clone(),
-                subfamily_name: self.font_datas[idx].subfamily_name.clone(),
-            })
+            .map(|idx| self.to_font_ref(idx))
             .collect())
     }
 
@@ -442,14 +599,14 @@ impl FontCache {
         result_set.into_iter().collect()
     }
 
-    pub fn to_font_ref<'a>(&'a self, font_info: &FontInfo) -> FontCacheRef<'a> {
+    fn to_font_ref<'a>(&'a self, cache_index: usize) -> FontCacheRef<'a> {
         FontCacheRef {
             font_cache: &self,
-            cache_index: font_info.cache_index,
+            cache_index: cache_index,
         }
     }
 
-    fn cache_raw_data(&mut self, path: impl AsRef<Path>) -> Result<SmallVec<[usize; 16]>> {
+    fn load_raw_data(&self, path: impl AsRef<Path>) -> Result<RawCacheResult> {
         let font_file_type = FontFileType::from_path(&path)?;
         let raw_bytes = std::fs::read(&path).with_context(|| {
             format!(
@@ -465,19 +622,11 @@ impl FontCache {
 
         // Check if an already parsed file contained identical data
         if let Some(p) = self.raw_data_hashes_to_paths.get(&raw_data_hash) {
-            return Ok(self.paths_to_font_idxs.get(p).unwrap().clone());
+            return Ok(RawCacheResult::AlreadyCached {
+                path: path.as_ref().into(),
+                idxs: self.paths_to_font_idxs.get(p).unwrap().clone(),
+            });
         }
-
-        // Construct the range (window) on all the cached raw data that will correspond to the data in this file
-        let raw_data_len = raw_bytes.len();
-        let start_index = self.all_raw_data.len();
-        let end_index = start_index + raw_data_len;
-        assert_eq!(
-            end_index - start_index,
-            raw_data_len,
-            "font cache: the calculated range is not equal to the length of the inserted data"
-        );
-        let raw_data_range = start_index..end_index;
 
         // Load the data with skrifa
         let file_ref: skrifa::raw::FileRef = skrifa::raw::FileRef::new(&raw_bytes)?;
@@ -486,11 +635,7 @@ impl FontCache {
         // so init to -1
         let mut font_ref_idx: i32 = -1;
 
-        // new_font_datas.len() + replace_font_datas.len() + skipped_font_datas should equal the number
-        // of fonts in the file_ref
-        let mut new_font_datas: Vec<FontCacheData> = Vec::new();
-        let mut replace_font_datas: Vec<(usize, FontCacheData)> = Vec::new();
-        let mut skipped_font_datas: usize = 0;
+        let mut font_datas: Vec<FontCacheData> = Vec::new();
 
         for font in file_ref.fonts() {
             font_ref_idx += 1;
@@ -549,36 +694,82 @@ impl FontCache {
 
             let metrics = font.metrics(Size::unscaled(), LocationRef::default());
 
+            font_datas.push(FontCacheData {
+                font_ref_idx: font_ref_idx as u32,
+                //raw_data_range: raw_data_range.clone(),
+                family_name,
+                subfamily_name,
+                revision: font_revision,
+                unscaled_default_metrics: metrics,
+                variation_axes: axes,
+                named_instances,
+                features,
+            })
+        }
+
+        Ok(RawCacheResult::New {
+            path: path.as_ref().into(),
+            raw_data: raw_bytes,
+            raw_data_hash,
+            font_file_type,
+            font_datas,
+        })
+    }
+
+    fn store_raw_data(&mut self, raw_cache_data: Result<RawCacheResult>) -> Result<CacheResult> {
+        if raw_cache_data.is_err() {
+            return Err(raw_cache_data.err().unwrap());
+        }
+        let raw_cache_data = raw_cache_data.unwrap();
+        let (path, raw_data, raw_data_hash, font_file_type, font_datas) = match raw_cache_data {
+            RawCacheResult::New {
+                path,
+                raw_data,
+                raw_data_hash,
+                font_file_type,
+                font_datas,
+            } => (path, raw_data, raw_data_hash, font_file_type, font_datas),
+            RawCacheResult::AlreadyCached { path, idxs } => {
+                return Ok(CacheResult::AlreadyCached { path, idxs });
+            }
+        };
+
+        // Construct the range (window) on all the cached raw data that will correspond to the data in this file
+        let raw_data_len = raw_data.len();
+        let start_index = self.all_raw_data.len();
+        let end_index = start_index + raw_data_len;
+        assert_eq!(
+            end_index - start_index,
+            raw_data_len,
+            "font cache: the calculated range is not equal to the length of the inserted data"
+        );
+        let raw_data_range = start_index..end_index;
+
+        // new_font_datas.len() + replace_font_datas.len() + skipped_font_datas should equal the number
+        // of fonts in the file_ref
+        let font_datas_length = font_datas.len();
+        let mut new_font_datas: Vec<FontCacheData> = Vec::new();
+        let mut replace_font_datas: Vec<(usize, FontCacheData)> = Vec::new();
+        let mut skipped_font_datas: usize = 0;
+
+        for fd in font_datas {
             // Check if an this font is the same family + subfamily, but with "better"
             // properties
-            if let Ok(existing) = self.find_font(&family_name, subfamily_name.as_ref()) {
-                if axes.len() > existing.variation_axes().len()
-                    || (axes.len() == existing.variation_axes().len()
-                        && features.len() > existing.features().len())
-                    || (axes.len() == existing.variation_axes().len()
-                        && features.len() == existing.features().len()
-                        && named_instances.len() > existing.named_instances().len())
-                    || (axes.len() == existing.variation_axes().len()
-                        && features.len() == existing.features().len()
-                        && named_instances.len() == existing.named_instances().len()
-                        && font_revision > *existing.revision())
+            if let Ok(existing) = self.find_font(&fd.family_name, fd.subfamily_name.as_ref()) {
+                if fd.variation_axes.len() > existing.variation_axes().len()
+                    || (fd.variation_axes.len() == existing.variation_axes().len()
+                        && fd.features.len() > existing.features().len())
+                    || (fd.variation_axes.len() == existing.variation_axes().len()
+                        && fd.features.len() == existing.features().len()
+                        && fd.named_instances.len() > existing.named_instances().len())
+                    || (fd.variation_axes.len() == existing.variation_axes().len()
+                        && fd.features.len() == existing.features().len()
+                        && fd.named_instances.len() == existing.named_instances().len()
+                        && fd.revision > *existing.revision())
                 {
                     // if a duplicate font exists and the new one is better, replace the font
                     // at the existing index
-                    replace_font_datas.push((
-                        existing.cache_index,
-                        FontCacheData {
-                            font_ref_idx: font_ref_idx as u32,
-                            raw_data_range: raw_data_range.clone(),
-                            family_name,
-                            subfamily_name,
-                            revision: font_revision,
-                            unscaled_default_metrics: metrics,
-                            variation_axes: axes,
-                            named_instances,
-                            features,
-                        },
-                    ))
+                    replace_font_datas.push((existing.cache_index, fd))
                 } else {
                     // if a duplicate font exists but the new one is not better,
                     // skip the new font
@@ -587,25 +778,24 @@ impl FontCache {
                 }
             } else {
                 // if no duplicate is found, simply add the font
-                new_font_datas.push(FontCacheData {
-                    font_ref_idx: font_ref_idx as u32,
-                    raw_data_range: raw_data_range.clone(),
-                    family_name,
-                    subfamily_name,
-                    revision: font_revision,
-                    unscaled_default_metrics: metrics,
-                    variation_axes: axes,
-                    named_instances,
-                    features,
-                });
+                new_font_datas.push(fd);
             };
         }
 
+        // all fonts in the file should be processed
+        debug_assert_eq!(
+            new_font_datas.len() + replace_font_datas.len() + skipped_font_datas,
+            // lengths start at 1, font_ref_index starts at 0
+            font_datas_length,
+            "{}",
+            path.to_string_lossy()
+        );
+
         // if all fonts were skipped, only save the path and hashed data values
         // (so the cache can verify this file/data was already processed)
-        // and return an error
+        // and return an empty smallvec
         if new_font_datas.is_empty() && replace_font_datas.is_empty() {
-            let path: PathBuf = path.as_ref().into();
+            //let path: PathBuf = path.as_ref().into();
             self.paths.push(path.clone());
             self.raw_data_hashes_to_paths
                 .insert(raw_data_hash, path.clone());
@@ -616,17 +806,8 @@ impl FontCache {
             self.paths_to_data_ranges
                 .insert(path.clone(), std::ops::Range::default());
 
-            return Err(FontError::NothingToCache(path.to_string_lossy().to_string()).into());
+            return Ok(CacheResult::NoNewData(path));
         }
-
-        // all fonts in the file should be processed
-        debug_assert_eq!(
-            new_font_datas.len() + replace_font_datas.len() + skipped_font_datas,
-            // lengths start at 1, font_ref_index starts at 0
-            (font_ref_idx + 1) as usize,
-            "{}",
-            path.as_ref().to_string_lossy()
-        );
 
         // new font cache indexes
         let new_fonts_start_index: usize = self.font_datas.len();
@@ -639,6 +820,9 @@ impl FontCache {
 
         let font_datas_extended_len = self.font_datas.len() + new_font_datas.len();
 
+        let replaced_font_idxs: SmallVec<[usize; 16]> =
+            replace_font_datas.iter().map(|r| r.0).collect();
+
         // sanity checks *before* modifications
 
         // failing these three means something went wrong on a previous
@@ -648,19 +832,19 @@ impl FontCache {
             self.paths.len(),
             self.font_file_types.len(),
             "{}",
-            path.as_ref().to_string_lossy()
+            path.to_string_lossy()
         );
         debug_assert_eq!(
             self.paths.len(),
             self.paths_to_font_idxs.len(),
             "{}",
-            path.as_ref().to_string_lossy()
+            path.to_string_lossy()
         );
         debug_assert_eq!(
             self.paths.len(),
             self.raw_data_hashes_to_paths.len(),
             "{}",
-            path.as_ref().to_string_lossy()
+            path.to_string_lossy()
         );
 
         // all fonts should be referred to by only a single path, therefore the
@@ -674,7 +858,7 @@ impl FontCache {
                 .sum::<usize>()
                 + new_font_idxs.len(),
             "{}",
-            path.as_ref().to_string_lossy()
+            path.to_string_lossy()
         );
 
         // the raw data ranges of all the paths + the new raw data range
@@ -685,17 +869,15 @@ impl FontCache {
                 .map(|r| r.len())
                 .sum::<usize>()
                 + raw_data_range.len(),
-            self.all_raw_data.len() + &raw_bytes.len(),
+            self.all_raw_data.len() + &raw_data.len(),
             "{}",
-            path.as_ref().to_string_lossy()
+            path.to_string_lossy()
         );
 
         // add path and hash related stuff
         // need to do this now because we need this data to properly process
         // replacements
-        let path: PathBuf = path.as_ref().into();
-
-        self.all_raw_data.extend(raw_bytes);
+        self.all_raw_data.extend(raw_data);
         self.paths.push(path.clone());
         self.raw_data_hashes_to_paths
             .insert(raw_data_hash, path.clone());
@@ -761,7 +943,11 @@ impl FontCache {
 
         self.font_datas.extend(new_font_datas);
 
-        Ok(path_to_font_idxs)
+        Ok(CacheResult::New {
+            path,
+            newly_cached: new_font_idxs,
+            replaced: replaced_font_idxs,
+        })
     }
 }
 
