@@ -1,6 +1,7 @@
 mod error;
 mod gfx;
 mod input;
+#[cfg_attr(windows, path = "os/windows/mod.rs")]
 mod os;
 
 use anyhow::Result;
@@ -31,7 +32,7 @@ use crate::input::KeyboardState;
 
 use cgmath::prelude::*;
 
-use crate::os::windows::font_util;
+use crate::os::font_util;
 
 const SIXTEEN_MILLIS: Duration = Duration::from_millis(16);
 
@@ -265,18 +266,32 @@ fn main() -> Result<()> {
 
     let mut font_cache = FontCache::new();
 
-    eprintln!(
+    /*eprintln!(
         "{:?}",
         font_cache.load_font_file("./fonts/cascadia-code/Cascadia.ttf")
     );
     eprintln!(
         "{:?}",
         font_cache.load_font_file("./fonts/CascadiaCode-Regular.ttf")
-    );
+    );*/
 
-    for font_path in system_fonts {
+    /*let mut font_strings: Vec<String> = system_fonts
+        .iter()
+        .map(|p| p.to_string_lossy().to_ascii_uppercase())
+        .collect();
+    font_strings.sort();
+    for font_path in &font_strings {
+        eprintln!("{}", font_path)
+    }*/
+    let timer = Instant::now();
+    for font_path in &system_fonts {
         let _ = font_cache.load_font_file(font_path);
     }
+    eprintln!(
+        "cached {} system fonts in {} micros",
+        system_fonts.len(),
+        timer.elapsed().as_micros()
+    );
 
     /*let cambriattc = font_cache.load_font_file("./fonts/cambria.ttc")?;
     eprintln!("{:?}", cambriattc);
@@ -295,10 +310,10 @@ fn main() -> Result<()> {
 
     eprintln!("{:?}", cascadia);
     let source_serif_ref = font_cache.to_font_ref(&source_serif[0]);*/
-    eprintln!("{:?}", font_cache.search_fonts("cascadia code"));
-    eprintln!("{:?}", font_cache.search_fonts("times new roman"));
-    eprintln!("{:?}", font_cache.search_fonts("cambria"));
-    eprintln!("{:?}", font_cache.search_fonts("Yu Gothic"));
+    //eprintln!("{:?}", font_cache.search_fonts("cascadia code"));
+    //eprintln!("{:?}", font_cache.search_fonts("times new roman"));
+    // eprintln!("{:?}", font_cache.search_fonts("cambria"));
+    // eprintln!("{:?}", font_cache.search_fonts("Yu Gothic"));
     /*let mut font_face: FontShaper = FontShaper::new(
             source_serif_ref,
             Some(&[Variation::from(("Weight", 400.0f32))]),
@@ -315,12 +330,12 @@ fn main() -> Result<()> {
     //eprintln!("{:?}", cascadia_refs);
     env_logger::init();
 
-    let event_loop = EventLoop::new().unwrap();
+    /*let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = App::new();
 
-    event_loop.run_app(&mut app).unwrap();
+    event_loop.run_app(&mut app).unwrap();*/
 
     Ok(())
 }
