@@ -222,36 +222,36 @@ fn main() -> Result<()> {
         let _ = font_cache.load_font_file(font_path);
         result += 1;
     }*/
-    let mut result = font_cache.load_system_fonts()?;
-
-    result.sort_by_key(|k| k.full_name());
-
-    for font in &result {
-        eprintln!("{}", font.pretty_print());
-        /*eprintln!(
-            "{}{}",
-            font.family_name(),
-            if let Some(sf) = font.subfamily_name() {
-                &format!(" - {sf}")
-            } else {
-                ""
-            }
-        );*/
+    {
+        let result = font_cache.load_system_fonts()?;
+        eprintln!(
+            "cached {} system fonts in {} ms",
+            result.len(),
+            timer.elapsed().as_millis()
+        );
+        //result.sort();
     }
 
     eprintln!(
-        "cached {} system fonts in {} ms",
-        result.len(),
-        timer.elapsed().as_millis()
+        "font cache data size: {} MiB",
+        font_cache.data_size() as f32 / 1048576.0f32
     );
 
     //font_cache.list_fonts(true);
 
-    let source_serif = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
+    let _ = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
 
     // eprintln!("{:?}", cascadia);
     // let source_serif_ref = font_cache.to_font_ref(&source_serif[0]);
-    // eprintln!("{:?}", font_cache.search_fonts("cascadia code"));
+    eprintln!(
+        "{}",
+        font_cache
+            .search_fonts("cascadia code")
+            .iter()
+            .map(|fcr| fcr.pretty_print())
+            .collect::<Vec<String>>()
+            .join("\n")
+    );
     //eprintln!("{:?}", font_cache.search_fonts("times new roman"));
     // eprintln!("{:?}", font_cache.search_fonts("cambria"));
     // eprintln!("{:?}", font_cache.search_fonts("Yu Gothic"));

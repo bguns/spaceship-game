@@ -252,6 +252,18 @@ impl<'a> std::cmp::PartialEq for FontCacheRef<'a> {
 
 impl<'a> std::cmp::Eq for FontCacheRef<'a> {}
 
+impl<'a> std::cmp::PartialOrd for FontCacheRef<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.cache_index.partial_cmp(&other.cache_index)
+    }
+}
+
+impl<'a> std::cmp::Ord for FontCacheRef<'a> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.cache_index.cmp(&other.cache_index)
+    }
+}
+
 impl<'a> std::hash::Hash for FontCacheRef<'a> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.cache_index.hash(state);
@@ -316,7 +328,7 @@ enum RawCacheResult {
     },
 }
 
-pub enum CacheResult {
+enum CacheResult {
     New {
         path: PathBuf,
         newly_cached: SmallVec<[usize; 16]>,
@@ -393,22 +405,10 @@ impl FontCache {
     pub fn load_system_fonts<'a>(&'a mut self) -> Result<Vec<FontCacheRef<'a>>> {
         let system_font_paths = font_util::load_system_font_paths()?;
         self.load_multiple_font_files(system_font_paths)
+    }
 
-        /*let raw_data: Vec<Result<RawCacheResult>> = system_font_paths
-            .into_par_iter()
-            .map(|path| self.load_raw_data(path))
-            .collect();
-
-        raw_data
-            .into_iter()
-            .map(|raw_data| self.store_raw_data(raw_data))
-            .map(|results| {
-                results.map(|r| match r {
-                    CacheResult::New { newly_cached, .. } => newly_cached.len(),
-                    _ => 0,
-                })
-            })
-            .sum()*/
+    pub fn data_size(&self) -> usize {
+        self.all_raw_data.len()
     }
 
     pub fn load_multiple_font_files<'a>(
@@ -416,7 +416,8 @@ impl FontCache {
         paths: Vec<impl Into<PathBuf>>,
     ) -> Result<Vec<FontCacheRef<'a>>> {
         let result_count_heuristic = 2 * paths.len();
-        let raw_data: Vec<Result<RawCacheResult>> = paths
+
+        let raw_datas: Vec<Result<RawCacheResult>> = paths
             .into_iter()
             .map(|path| path.into())
             .collect::<Vec<PathBuf>>()
@@ -424,43 +425,32 @@ impl FontCache {
             .map(|path| self.load_raw_data(path))
             .collect();
 
-        raw_data
+        let mut result_idxs: Vec<usize> = Vec::with_capacity(result_count_heuristic);
+
+        for raw_data in raw_datas.into_iter() {
+            let idxs = match self.store_raw_data(raw_data)? {
+                CacheResult::New {
+                    newly_cached,
+                    replaced,
+                    ..
+                } => newly_cached
+                    .into_iter()
+                    .chain(replaced.into_iter())
+                    .collect::<Vec<usize>>(),
+                CacheResult::AlreadyCached { idxs, .. } => idxs.into_iter().collect::<Vec<usize>>(),
+                CacheResult::NoNewData(_) => Vec::new(),
+            };
+
+            result_idxs.extend(idxs);
+        }
+
+        result_idxs.sort();
+        result_idxs.dedup();
+
+        Ok(result_idxs
             .into_iter()
-            .map(|raw_data| self.store_raw_data(raw_data))
-            .map(|results| {
-                results.map(|r| match r {
-                    CacheResult::New {
-                        newly_cached,
-                        replaced,
-                        ..
-                    } => newly_cached
-                        .into_iter()
-                        .chain(replaced.into_iter())
-                        .collect::<SmallVec<[usize; 16]>>(),
-                    CacheResult::AlreadyCached { idxs, .. } => idxs,
-                    CacheResult::NoNewData(_) => SmallVec::new(),
-                })
-            })
-            .try_fold(
-                Vec::with_capacity(result_count_heuristic),
-                |mut unrolled, el| {
-                    unrolled.extend(el?);
-                    Ok(unrolled)
-                },
-            )
-            .map(|idxs| idxs.iter().map(|idx| self.to_font_ref(*idx)).collect())
-        /*.map(|r| {
-            r.map(|idxs| {
-                idxs.iter()
-                    .map(|idx| self.to_font_ref(*idx))
-                    .collect::<Vec<FontCacheRef<'a>>>()
-            })
-        })
-        .collect::<Result<Vec<Vec<FontCacheRef<'a>>>>>()
-        .into_iter()
-        .map(|frs| frs.into_iter().flatten().collect::<Vec<_>>())
-        .collect::<Result<Vec<_>>>()*/
-        //.collect::<Result<Vec<FontCacheRef<'a>>>>()
+            .map(|idx| self.to_font_ref(idx))
+            .collect())
     }
 
     pub fn load_font_file<'a>(
@@ -559,7 +549,7 @@ impl FontCache {
                     })
         }
 
-        let mut result_set: HashSet<FontCacheRef<'a>> = HashSet::new();
+        let mut results: Vec<FontCacheRef<'a>> = Vec::with_capacity(8);
 
         let ss: String = search_string.into();
         let terms: Vec<&str> = ss.split(' ').collect();
@@ -569,7 +559,7 @@ impl FontCache {
             let one = terms[0..i].join(" ");
             let two = terms[i..tlen].join(" ");
 
-            result_set.extend(
+            results.extend(
                 self.font_datas
                     .iter()
                     .enumerate()
@@ -596,7 +586,10 @@ impl FontCache {
             );
         }
 
-        result_set.into_iter().collect()
+        results.sort();
+        results.dedup();
+
+        results
     }
 
     fn to_font_ref<'a>(&'a self, cache_index: usize) -> FontCacheRef<'a> {
@@ -687,10 +680,10 @@ impl FontCache {
                         .flat_map(|fl| fl.feature_records())
                         .map(|f| f.feature_tag().to_string()),
                 )
-                .collect::<HashSet<String>>()
-                .into_iter()
                 .collect::<SmallVec<[String; 32]>>();
+
             features.sort();
+            features.dedup();
 
             let metrics = font.metrics(Size::unscaled(), LocationRef::default());
 
