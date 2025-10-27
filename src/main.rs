@@ -8,7 +8,7 @@ use anyhow::Result;
 
 use device_query::{DeviceState, Keycode};
 
-use harfrust::{FontRef, Variation};
+use harfrust::{Feature, FontRef, Variation};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -255,6 +255,13 @@ fn main() -> Result<()> {
     //eprintln!("{:?}", font_cache.search_fonts("times new roman"));
     // eprintln!("{:?}", font_cache.search_fonts("cambria"));
     // eprintln!("{:?}", font_cache.search_fonts("Yu Gothic"));
+
+    let tnr = &font_cache.search_fonts("times new roman regular")[0];
+
+    let shaper = font_cache.font_shaper::<Vec<Variation>, Vec<Feature>>(tnr, None);
+    let text = "fififi";
+    shaper.shape(text, None);
+
     /*let mut font_face: FontShaper = FontShaper::new(
             source_serif_ref,
             Some(&[Variation::from(("Weight", 400.0f32))]),

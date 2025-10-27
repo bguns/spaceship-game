@@ -1,9 +1,10 @@
-use std::collections::HashSet;
+use std::cell::{Ref, RefCell, UnsafeCell};
 use std::ffi::OsStr;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result};
@@ -31,8 +32,6 @@ enum FontError {
         "{0}: invalid font file: named instance has no name defined at its specified subfamily_name_index: {1}"
     )]
     NamedInstanceHasNoName(String, u16),
-    #[error("{0}: font file contains no uncached font definitions")]
-    NothingToCache(String),
     #[error("font with family \"{family_name}\"{} not cached", if let Some(sf) = .subfamily_name { format!(" and subfamily \"{}\"", sf) } else { " and no subfamily ".to_string() })]
     NotCached {
         family_name: String,
@@ -81,15 +80,10 @@ impl FontFileType {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-struct FontIndex {
-    raw_data_index: usize,
-    collection_index: u32,
-}
-
 #[derive(Debug, Clone)]
 pub struct NamedInstanceInfo {
     pub name: String,
+    named_instance_index: usize,
     coords: skrifa::instance::Location,
 }
 
@@ -97,6 +91,7 @@ impl NamedInstanceInfo {
     fn from_font_ref<P: AsRef<Path>>(
         font_path: P,
         font_ref: &FontRef<'_>,
+        named_instance_index: usize,
         named_instance: &skrifa::NamedInstance<'_>,
     ) -> Result<Self> {
         let name: String = font_ref
@@ -110,7 +105,11 @@ impl NamedInstanceInfo {
                 )
             })?;
         let coords = named_instance.location();
-        Ok(Self { name, coords })
+        Ok(Self {
+            name,
+            named_instance_index,
+            coords,
+        })
     }
 }
 
@@ -118,10 +117,12 @@ impl NamedInstanceInfo {
 pub struct FontCacheRef<'a> {
     font_cache: &'a FontCache,
     cache_index: usize,
+    // I'd love to have this in the cache, but it seems impossible for the moment
+    shaper_instance: Option<ShaperInstance>,
 }
 
 impl<'a> FontCacheRef<'a> {
-    pub fn full_name(&'a self) -> String {
+    pub fn full_name(&self) -> String {
         format!(
             "{}{}",
             &self.font_cache.font_datas[self.cache_index].family_name,
@@ -136,29 +137,29 @@ impl<'a> FontCacheRef<'a> {
         )
     }
 
-    pub fn family_name(&'a self) -> &'a str {
+    pub fn family_name(&self) -> &str {
         &self.font_cache.font_datas[self.cache_index].family_name
     }
 
-    pub fn subfamily_name(&'a self) -> Option<&'a str> {
+    pub fn subfamily_name(&self) -> Option<&str> {
         self.font_cache.font_datas[self.cache_index]
             .subfamily_name
             .as_deref()
     }
 
-    pub fn variation_axes(&'a self) -> &'a [Axis] {
+    pub fn variation_axes(&self) -> &[Axis] {
         &self.font_cache.font_datas[self.cache_index].variation_axes
     }
 
-    pub fn named_instances(&'a self) -> &'a [NamedInstanceInfo] {
+    pub fn named_instances(&self) -> &[NamedInstanceInfo] {
         &self.font_cache.font_datas[self.cache_index].named_instances
     }
 
-    pub fn features(&'a self) -> &'a [String] {
+    pub fn features(&self) -> &[String] {
         &self.font_cache.font_datas[self.cache_index].features
     }
 
-    pub fn pretty_print(&'a self) -> String {
+    pub fn pretty_print(&self) -> String {
         format!(
             r#"
 Font Family: {}
@@ -193,9 +194,108 @@ Font Family: {}
         )
     }
 
-    fn revision(&'a self) -> &'a skrifa::raw::types::Fixed {
+    fn revision(&self) -> &skrifa::raw::types::Fixed {
         &self.font_cache.font_datas[self.cache_index].revision
     }
+
+    fn to_font_ref(&'a self) -> FontRef<'a> {
+        let font_data = &self.font_cache.font_datas[self.cache_index];
+        FontRef::from_index(
+            &self.font_cache.all_raw_data[font_data.raw_data_range.clone()],
+            font_data.font_ref_idx,
+        )
+        .expect("Unable to obtain FontRef for already cached font!")
+    }
+
+    /*fn shaper_instance<V>(
+        &'a self,
+        settings: Option<ShaperInstanceSettings<V>>,
+    ) -> Option<Ref<'a, ShaperInstance>>
+    where
+        V: IntoIterator<Item = Variation>,
+    {
+        let shaper_instance = &self.font_cache.font_datas[self.cache_index].shaper_instance;
+        let font_ref = self.to_font_ref();
+        match settings {
+            Some(ShaperInstanceSettings::Variations(variations)) => {
+                shaper_instance
+                    .borrow_mut()
+                    .unwrap()
+                    .set_variations(&font_ref, variations);
+            }
+            Some(ShaperInstanceSettings::NamedInstance(named_instance_info)) => {
+                shaper_instance
+                    .borrow_mut()
+                    .unwrap()
+                    .set_named_instance(&font_ref, named_instance_info.named_instance_index);
+            }
+            None => {}
+        }
+
+        shaper_instance.borrow()
+    }*/
+
+    /*fn shaper_instance_settings<V>(&'a mut self, settings: ShaperInstanceSettings<V>) -> Result<()>
+    where
+        V: IntoIterator<Item = Variation>,
+    {
+        {
+            //let shaper_instance = self.shaper_instance.as_mut();
+            if let None = self.shaper_instance {
+                self.shaper_instance = Some(ShaperInstance::from_variations(
+                    &self.to_font_ref(),
+                    &[] as &[Variation],
+                ));
+            }
+        }
+
+        let font_ref = &self.to_font_ref();
+
+        let shaper_instance = &mut self.shaper_instance.as_mut().unwrap();
+        match settings {
+            ShaperInstanceSettings::Variations(variations) => {
+                shaper_instance.set_variations(&font_ref, variations);
+            }
+            ShaperInstanceSettings::NamedInstance(named_instance_info) => {
+                shaper_instance
+                    .set_named_instance(&font_ref, named_instance_info.named_instance_index);
+            }
+        }
+
+        Ok(())
+    }*/
+
+    /*fn shaper<V>(&'a self, settings: Option<ShaperInstanceSettings<V>>) -> Shaper<'a>
+    where
+        V: IntoIterator<Item = Variation>,
+    {
+        let shaper_instance = self.font_cache.font_datas[self.cache_index].shaper_instance;
+        let font_ref = self.to_font_ref();
+        if let Some(settings) = settings {
+            match settings {
+                ShaperInstanceSettings::Variations(variations) => {
+                    shaper_instance
+                        .borrow_mut()
+                        .as_mut()
+                        .map(|si| si.set_variations(&font_ref, variations));
+                    //.set_variations(&font_ref, variations);
+                }
+                ShaperInstanceSettings::NamedInstance(named_instance_info) => {
+                    shaper_instance.borrow_mut().as_mut().map(|si| {
+                        si.set_named_instance(&font_ref, named_instance_info.named_instance_index)
+                    });
+                }
+            }
+        }
+        let shaper = self
+            .shaper_data()
+            .shaper(&self.to_font_ref())
+            .instance(shaper_instance.borrow().as_ref())
+            .point_size(None)
+            .build();
+
+        shaper
+    }*/
 }
 
 impl<'a> std::fmt::Display for FontCacheRef<'a> {
@@ -272,7 +372,7 @@ impl<'a> std::hash::Hash for FontCacheRef<'a> {
 
 struct FontCacheData {
     font_ref_idx: u32,
-    //raw_data_range: std::ops::Range<usize>,
+    raw_data_range: std::ops::Range<usize>,
     family_name: String,
     subfamily_name: Option<String>,
     revision: skrifa::raw::types::Fixed,
@@ -280,6 +380,8 @@ struct FontCacheData {
     variation_axes: SmallVec<[Axis; 4]>,
     named_instances: SmallVec<[NamedInstanceInfo; 8]>,
     features: SmallVec<[String; 32]>,
+    shaper_data: UnsafeCell<Option<Box<ShaperData>>>,
+    shaper_instance: ShaperInstance,
 }
 
 impl std::fmt::Debug for FontCacheData {
@@ -314,20 +416,31 @@ impl std::fmt::Debug for FontCacheData {
     }
 }
 
+struct RawFontCacheData {
+    font_ref_idx: u32,
+    family_name: String,
+    subfamily_name: Option<String>,
+    revision: skrifa::raw::types::Fixed,
+    unscaled_default_metrics: Metrics,
+    variation_axes: SmallVec<[Axis; 4]>,
+    named_instances: SmallVec<[NamedInstanceInfo; 8]>,
+    features: SmallVec<[String; 32]>,
+}
+
 enum RawCacheResult {
     AlreadyCached {
         path: PathBuf,
-        idxs: SmallVec<[usize; 16]>,
     },
     New {
         path: PathBuf,
         raw_data: Vec<u8>,
         raw_data_hash: u64,
         font_file_type: FontFileType,
-        font_datas: Vec<FontCacheData>,
+        font_datas: Vec<RawFontCacheData>,
     },
 }
 
+#[allow(unused)]
 enum CacheResult {
     New {
         path: PathBuf,
@@ -352,6 +465,7 @@ pub struct FontCache {
     font_datas: Vec<FontCacheData>,
 }
 
+#[allow(unused)]
 impl FontCache {
     pub fn new() -> Self {
         Self {
@@ -417,12 +531,14 @@ impl FontCache {
     ) -> Result<Vec<FontCacheRef<'a>>> {
         let result_count_heuristic = 2 * paths.len();
 
+        let raw_data_hashes_to_paths = Arc::new(&self.raw_data_hashes_to_paths);
+
         let raw_datas: Vec<Result<RawCacheResult>> = paths
             .into_iter()
             .map(|path| path.into())
             .collect::<Vec<PathBuf>>()
             .into_par_iter()
-            .map(|path| self.load_raw_data(path))
+            .map(|path| Self::load_raw_data(path, raw_data_hashes_to_paths.clone()))
             .collect();
 
         let mut result_idxs: Vec<usize> = Vec::with_capacity(result_count_heuristic);
@@ -458,9 +574,12 @@ impl FontCache {
         path: impl Into<PathBuf>,
     ) -> Result<Vec<FontCacheRef<'a>>> {
         let path: PathBuf = path.into();
+        let raw_data_hashes_to_paths = Arc::new(&self.raw_data_hashes_to_paths);
         let indices = match self.paths_to_font_idxs.get(&path) {
             Some(idx) => idx.clone(),
-            None => match self.store_raw_data(self.load_raw_data(&path))? {
+            None => match self
+                .store_raw_data(Self::load_raw_data(&path, raw_data_hashes_to_paths.clone()))?
+            {
                 CacheResult::New {
                     newly_cached,
                     replaced,
@@ -521,6 +640,7 @@ impl FontCache {
             Ok(FontCacheRef {
                 font_cache: &self,
                 cache_index: family_idxs[0],
+                shaper_instance: None,
             })
         } else {
             Err(FontError::NotCached {
@@ -582,6 +702,7 @@ impl FontCache {
                     .map(|(idx, _)| FontCacheRef {
                         font_cache: &self,
                         cache_index: idx,
+                        shaper_instance: None,
                     }),
             );
         }
@@ -596,10 +717,14 @@ impl FontCache {
         FontCacheRef {
             font_cache: &self,
             cache_index: cache_index,
+            shaper_instance: None,
         }
     }
 
-    fn load_raw_data(&self, path: impl AsRef<Path>) -> Result<RawCacheResult> {
+    fn load_raw_data(
+        path: impl AsRef<Path>,
+        raw_data_hashes_to_paths: Arc<&HashMap<u64, PathBuf>>,
+    ) -> Result<RawCacheResult> {
         let font_file_type = FontFileType::from_path(&path)?;
         let raw_bytes = std::fs::read(&path).with_context(|| {
             format!(
@@ -614,10 +739,9 @@ impl FontCache {
         let raw_data_hash = hasher.finish();
 
         // Check if an already parsed file contained identical data
-        if let Some(p) = self.raw_data_hashes_to_paths.get(&raw_data_hash) {
+        if let Some(p) = raw_data_hashes_to_paths.get(&raw_data_hash) {
             return Ok(RawCacheResult::AlreadyCached {
                 path: path.as_ref().into(),
-                idxs: self.paths_to_font_idxs.get(p).unwrap().clone(),
             });
         }
 
@@ -628,7 +752,7 @@ impl FontCache {
         // so init to -1
         let mut font_ref_idx: i32 = -1;
 
-        let mut font_datas: Vec<FontCacheData> = Vec::new();
+        let mut font_datas: Vec<RawFontCacheData> = Vec::new();
 
         for font in file_ref.fonts() {
             font_ref_idx += 1;
@@ -662,7 +786,8 @@ impl FontCache {
             for ni in font
                 .named_instances()
                 .iter()
-                .map(|ni| NamedInstanceInfo::from_font_ref(&path, &font, &ni))
+                .enumerate()
+                .map(|(idx, ni)| NamedInstanceInfo::from_font_ref(&path, &font, idx, &ni))
             {
                 named_instances.push(ni?);
             }
@@ -687,7 +812,7 @@ impl FontCache {
 
             let metrics = font.metrics(Size::unscaled(), LocationRef::default());
 
-            font_datas.push(FontCacheData {
+            font_datas.push(RawFontCacheData {
                 font_ref_idx: font_ref_idx as u32,
                 //raw_data_range: raw_data_range.clone(),
                 family_name,
@@ -722,7 +847,8 @@ impl FontCache {
                 font_file_type,
                 font_datas,
             } => (path, raw_data, raw_data_hash, font_file_type, font_datas),
-            RawCacheResult::AlreadyCached { path, idxs } => {
+            RawCacheResult::AlreadyCached { path } => {
+                let idxs = self.paths_to_font_idxs.get(&path).unwrap().clone();
                 return Ok(CacheResult::AlreadyCached { path, idxs });
             }
         };
@@ -745,7 +871,23 @@ impl FontCache {
         let mut replace_font_datas: Vec<(usize, FontCacheData)> = Vec::new();
         let mut skipped_font_datas: usize = 0;
 
-        for fd in font_datas {
+        for raw_font_cache_data in font_datas {
+            let fd = FontCacheData {
+                font_ref_idx: raw_font_cache_data.font_ref_idx,
+                raw_data_range: raw_data_range.clone(),
+                family_name: raw_font_cache_data.family_name,
+                subfamily_name: raw_font_cache_data.subfamily_name,
+                revision: raw_font_cache_data.revision,
+                unscaled_default_metrics: raw_font_cache_data.unscaled_default_metrics,
+                variation_axes: raw_font_cache_data.variation_axes,
+                named_instances: raw_font_cache_data.named_instances,
+                features: raw_font_cache_data.features,
+                shaper_data: UnsafeCell::new(None),
+                shaper_instance: ShaperInstance::from_variations(
+                    &FontRef::from_index(&raw_data, raw_font_cache_data.font_ref_idx)?,
+                    &[] as &[Variation],
+                ),
+            };
             // Check if an this font is the same family + subfamily, but with "better"
             // properties
             if let Ok(existing) = self.find_font(&fd.family_name, fd.subfamily_name.as_ref()) {
@@ -942,45 +1084,109 @@ impl FontCache {
             replaced: replaced_font_idxs,
         })
     }
-}
 
-pub struct FontShaper<'a> {
-    raw_bytes: Vec<u8>,
-    font_ref: FontRef<'a>,
-    shaper_data: ShaperData,
-    shaper_instance: ShaperInstance,
-    features: Option<Vec<Feature>>,
-}
+    fn shaper_data<'a>(&'a self, font_cache_ref: &FontCacheRef<'_>) -> &'a ShaperData {
+        let font_data = &self.font_datas[font_cache_ref.cache_index];
 
-impl<'a> FontShaper<'a> {
-    pub fn new<V, F>(
-        font: FontRef<'a>,
-        variations: Option<V>,
-        features: Option<F>,
+        // Safety: FontCacheData initialization sets shaper_data to None.
+        // The only place where shaper_data can be mutated is here, and only once.
+        // The only place where references to shaper_data can be obtained from is here.
+        // The return value's lifetime is tied to the font cache
+        let value = unsafe {
+            let maybe_shaper = &mut *font_data.shaper_data.get();
+            if let None = maybe_shaper {
+                *maybe_shaper = Some(Box::new(ShaperData::new(&FontRef::from_index(&self.all_raw_data[font_data.raw_data_range.clone()], font_data.font_ref_idx).expect(&format!("Failed to construct FontRef from FontCacheData (for {}; cache_idx: {}, font_ref_idx:{})", font_cache_ref.full_name(), font_cache_ref.cache_index, font_data.font_ref_idx)))));
+            }
+            &*maybe_shaper
+        };
+
+        // Value is guaranteed to be initialized with Some(Box(ShaperData)) at this point
+        value.as_deref().unwrap()
+    }
+
+    pub fn font_shaper<'a, V, F>(
+        &'a self,
+        font_cache_ref: &'a FontCacheRef<'a>,
+        settings: Option<ShaperSettings<'a, V, F>>,
     ) -> FontShaper<'a>
     where
         V: IntoIterator,
         V::Item: Into<Variation>,
-        F: IntoIterator<Item = Feature>,
+        F: IntoIterator,
+        F::Item: Into<Feature>,
     {
-        let raw_bytes: Vec<u8> = font.data().as_bytes().into();
-        let shaper_data = ShaperData::new(&font);
+        FontShaper::new(
+            font_cache_ref.to_font_ref(),
+            &self.shaper_data(font_cache_ref),
+            settings.unwrap_or_else(|| ShaperSettings {
+                instance_settings: None,
+                shape_features: None,
+            }),
+        )
+    }
+}
 
-        let shaper_instance = if let Some(variations) = variations {
-            ShaperInstance::from_variations(&font, variations)
-        } else {
-            ShaperInstance::from_variations(&font, &[] as &[Variation])
+pub enum ShaperInstanceSettings<'a, V>
+where
+    V: IntoIterator,
+    V::Item: Into<Variation>,
+{
+    Variations(V),
+    NamedInstance(&'a NamedInstanceInfo),
+}
+
+pub struct ShaperSettings<'a, V, F>
+where
+    V: IntoIterator,
+    V::Item: Into<Variation>,
+    F: IntoIterator,
+    F::Item: Into<Feature>,
+{
+    instance_settings: Option<ShaperInstanceSettings<'a, V>>,
+    shape_features: Option<F>,
+}
+
+pub struct FontShaper<'a> {
+    font_ref: FontRef<'a>,
+    shaper_data: &'a ShaperData,
+    shaper_instance: ShaperInstance,
+    features: Vec<Feature>,
+}
+
+impl<'a> FontShaper<'a> {
+    fn new<V, F>(
+        font: FontRef<'a>,
+        shaper_data: &'a ShaperData,
+        shaper_settings: ShaperSettings<'a, V, F>,
+    ) -> FontShaper<'a>
+    where
+        V: IntoIterator,
+        V::Item: Into<Variation>,
+        F: IntoIterator,
+        F::Item: Into<Feature>,
+    {
+        //let shaper_data = ShaperData::new(&font);
+
+        let shaper_instance = match shaper_settings.instance_settings {
+            Some(ShaperInstanceSettings::Variations(variations)) => {
+                ShaperInstance::from_variations(&font, variations)
+            }
+            Some(ShaperInstanceSettings::NamedInstance(ni)) => {
+                ShaperInstance::from_named_instance(&font, ni.named_instance_index)
+            }
+            None => ShaperInstance::from_variations(&font, &[] as &[Variation]),
         };
 
-        let features = features.map(|feats| {
-            feats
-                .into_iter()
-                .map(|f| f.into())
-                .collect::<Vec<Feature>>()
-        });
+        let features = shaper_settings
+            .shape_features
+            .map(|f| {
+                f.into_iter()
+                    .map(|feat| feat.into())
+                    .collect::<Vec<Feature>>()
+            })
+            .unwrap_or_default();
 
         Self {
-            raw_bytes,
             font_ref: font,
             shaper_data,
             shaper_instance: shaper_instance,
@@ -988,14 +1194,10 @@ impl<'a> FontShaper<'a> {
         }
     }
 
-    pub fn shaper<V>(&'a mut self, variations: Option<V>) -> Shaper<'a>
-    where
-        V: IntoIterator,
-        V::Item: Into<Variation>,
-    {
-        if let Some(vars) = variations {
+    pub fn shaper(&'a mut self) -> Shaper<'a> {
+        /*if let Some(vars) = variations {
             self.shaper_instance.set_variations(&self.font_ref, vars);
-        }
+        }*/
         self.shaper_data
             .shaper(&self.font_ref.clone())
             .instance(Some(&self.shaper_instance))
@@ -1003,7 +1205,7 @@ impl<'a> FontShaper<'a> {
             .build()
     }
 
-    pub fn shape(&'a mut self, line: &str, input_buffer: Option<UnicodeBuffer>) -> GlyphBuffer {
+    pub fn shape(&'a self, line: &str, input_buffer: Option<UnicodeBuffer>) -> GlyphBuffer {
         let mut buffer = if let Some(input_buffer) = input_buffer {
             input_buffer
         } else {
@@ -1021,10 +1223,7 @@ impl<'a> FontShaper<'a> {
             .instance(Some(&self.shaper_instance))
             .point_size(None)
             .build();
-        let result = shaper.shape(
-            buffer,
-            self.features.as_ref().map_or(&[] as &[Feature], |f| &f),
-        );
+        let result = shaper.shape(buffer, &self.features);
         eprintln!(
             "{}",
             result.serialize(&shaper, harfrust::SerializeFlags::empty())

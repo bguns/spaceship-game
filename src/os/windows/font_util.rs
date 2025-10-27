@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::time::Instant;
 
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWriteCreateFactory, IDWriteFactory3, IDWriteLocalFontFileLoader,
@@ -10,7 +9,6 @@ use windows::core::*;
 use anyhow::Result;
 
 pub fn load_system_font_paths() -> Result<Vec<PathBuf>> {
-    let timer = Instant::now();
     let factory: IDWriteFactory3 = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
 
     let mut paths: HashSet<PathBuf> = HashSet::new();
@@ -35,6 +33,7 @@ pub fn load_system_font_paths() -> Result<Vec<PathBuf>> {
             let loader = font_file.GetLoader()?;
             let local_loader = loader.cast::<IDWriteLocalFontFileLoader>();
             if local_loader.is_err() {
+                // Not interested in remote or in-memory fonts at the moment
                 continue;
             }
             let local_loader = local_loader.unwrap();
@@ -67,10 +66,5 @@ pub fn load_system_font_paths() -> Result<Vec<PathBuf>> {
 
         paths.insert(file_path.into());
     }
-    eprintln!(
-        "found {} system font paths in {} micros",
-        paths.len(),
-        timer.elapsed().as_micros()
-    );
     Ok(paths.into_iter().collect())
 }
