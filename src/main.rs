@@ -4,10 +4,12 @@ mod input;
 #[cfg_attr(windows, path = "os/windows/mod.rs")]
 mod os;
 
+use crate::gfx::text::FontCacheRef;
 use anyhow::Result;
 
 use device_query::{DeviceState, Keycode};
 
+use gfx::text::{ShaperInstanceSettings, ShaperSettings};
 use harfrust::{Feature, FontRef, Variation};
 use winit::{
     application::ApplicationHandler,
@@ -226,7 +228,7 @@ fn main() -> Result<()> {
         let result = font_cache.load_system_fonts()?;
         eprintln!(
             "cached {} system fonts in {} ms",
-            result.len(),
+            result,
             timer.elapsed().as_millis()
         );
         //result.sort();
@@ -239,27 +241,43 @@ fn main() -> Result<()> {
 
     //font_cache.list_fonts(true);
 
-    let _ = font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
+    font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
 
     // eprintln!("{:?}", cascadia);
     // let source_serif_ref = font_cache.to_font_ref(&source_serif[0]);
-    eprintln!(
+    /*eprintln!(
         "{}",
-        font_cache
+        &font_cache
             .search_fonts("cascadia code")
             .iter()
             .map(|fcr| fcr.pretty_print())
             .collect::<Vec<String>>()
             .join("\n")
-    );
+    );*/
     //eprintln!("{:?}", font_cache.search_fonts("times new roman"));
     // eprintln!("{:?}", font_cache.search_fonts("cambria"));
     // eprintln!("{:?}", font_cache.search_fonts("Yu Gothic"));
 
-    let tnr = &font_cache.search_fonts("times new roman regular")[0];
+    //let cascadia = &font_cache.search_fonts("cascadia code regular")[0];
 
-    let shaper = font_cache.font_shaper::<Vec<Variation>, Vec<Feature>>(tnr, None);
-    let text = "fififi";
+    let source_serif = &font_cache.search_fonts("source serif variable regular")[0];
+
+    let shaper = font_cache.font_shaper(
+        source_serif,
+        None,
+        /*Some(ShaperSettings::new(
+            /*Some(ShaperInstanceSettings::NamedInstance(
+                source_serif.named_instances()[0].clone(),
+            )),*/
+            None,
+            /*Some([
+                Feature::from_str("+kern").unwrap(),
+                Feature::from_str("+liga").unwrap(),
+            ]),*/
+            None::<Vec<Feature>>,
+        )),*/
+    );
+    let text = "fifi=>fi";
     shaper.shape(text, None);
 
     /*let mut font_face: FontShaper = FontShaper::new(

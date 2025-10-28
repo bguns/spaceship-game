@@ -1,7 +1,7 @@
 use std::cell::{Ref, RefCell, UnsafeCell};
 use std::ffi::OsStr;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Display, PathBuf};
 use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -80,7 +80,7 @@ impl FontFileType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NamedInstanceInfo {
     pub name: String,
     named_instance_index: usize,
@@ -117,8 +117,6 @@ impl NamedInstanceInfo {
 pub struct FontCacheRef<'a> {
     font_cache: &'a FontCache,
     cache_index: usize,
-    // I'd love to have this in the cache, but it seems impossible for the moment
-    shaper_instance: Option<ShaperInstance>,
 }
 
 impl<'a> FontCacheRef<'a> {
@@ -516,7 +514,7 @@ impl FontCache {
         }
     }
 
-    pub fn load_system_fonts<'a>(&'a mut self) -> Result<Vec<FontCacheRef<'a>>> {
+    pub fn load_system_fonts(&mut self) -> Result<usize> {
         let system_font_paths = font_util::load_system_font_paths()?;
         self.load_multiple_font_files(system_font_paths)
     }
@@ -525,10 +523,7 @@ impl FontCache {
         self.all_raw_data.len()
     }
 
-    pub fn load_multiple_font_files<'a>(
-        &'a mut self,
-        paths: Vec<impl Into<PathBuf>>,
-    ) -> Result<Vec<FontCacheRef<'a>>> {
+    pub fn load_multiple_font_files(&mut self, paths: Vec<impl Into<PathBuf>>) -> Result<usize> {
         let result_count_heuristic = 2 * paths.len();
 
         let raw_data_hashes_to_paths = Arc::new(&self.raw_data_hashes_to_paths);
@@ -563,40 +558,14 @@ impl FontCache {
         result_idxs.sort();
         result_idxs.dedup();
 
-        Ok(result_idxs
-            .into_iter()
-            .map(|idx| self.to_font_ref(idx))
-            .collect())
+        Ok(result_idxs.len())
     }
 
-    pub fn load_font_file<'a>(
-        &'a mut self,
-        path: impl Into<PathBuf>,
-    ) -> Result<Vec<FontCacheRef<'a>>> {
+    pub fn load_font_file(&mut self, path: impl Into<PathBuf>) -> Result<()> {
         let path: PathBuf = path.into();
         let raw_data_hashes_to_paths = Arc::new(&self.raw_data_hashes_to_paths);
-        let indices = match self.paths_to_font_idxs.get(&path) {
-            Some(idx) => idx.clone(),
-            None => match self
-                .store_raw_data(Self::load_raw_data(&path, raw_data_hashes_to_paths.clone()))?
-            {
-                CacheResult::New {
-                    newly_cached,
-                    replaced,
-                    ..
-                } => newly_cached
-                    .into_iter()
-                    .chain(replaced.into_iter())
-                    .collect(),
-                CacheResult::AlreadyCached { idxs, .. } => idxs,
-                CacheResult::NoNewData(_) => SmallVec::new(),
-            },
-        };
-
-        Ok(indices
-            .into_iter()
-            .map(|idx| self.to_font_ref(idx))
-            .collect())
+        self.store_raw_data(Self::load_raw_data(&path, raw_data_hashes_to_paths.clone()))?;
+        Ok(())
     }
 
     pub fn find_font<'a>(
@@ -640,7 +609,6 @@ impl FontCache {
             Ok(FontCacheRef {
                 font_cache: &self,
                 cache_index: family_idxs[0],
-                shaper_instance: None,
             })
         } else {
             Err(FontError::NotCached {
@@ -702,7 +670,6 @@ impl FontCache {
                     .map(|(idx, _)| FontCacheRef {
                         font_cache: &self,
                         cache_index: idx,
-                        shaper_instance: None,
                     }),
             );
         }
@@ -717,7 +684,6 @@ impl FontCache {
         FontCacheRef {
             font_cache: &self,
             cache_index: cache_index,
-            shaper_instance: None,
         }
     }
 
@@ -1104,18 +1070,13 @@ impl FontCache {
         value.as_deref().unwrap()
     }
 
-    pub fn font_shaper<'a, V, F>(
+    pub fn font_shaper<'a>(
         &'a self,
         font_cache_ref: &'a FontCacheRef<'a>,
-        settings: Option<ShaperSettings<'a, V, F>>,
-    ) -> FontShaper<'a>
-    where
-        V: IntoIterator,
-        V::Item: Into<Variation>,
-        F: IntoIterator,
-        F::Item: Into<Feature>,
-    {
+        settings: Option<ShaperSettings>,
+    ) -> FontShaper<'a> {
         FontShaper::new(
+            font_cache_ref,
             font_cache_ref.to_font_ref(),
             &self.shaper_data(font_cache_ref),
             settings.unwrap_or_else(|| ShaperSettings {
@@ -1126,58 +1087,124 @@ impl FontCache {
     }
 }
 
-pub enum ShaperInstanceSettings<'a, V>
-where
-    V: IntoIterator,
-    V::Item: Into<Variation>,
-{
-    Variations(V),
-    NamedInstance(&'a NamedInstanceInfo),
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShaperInstanceSettings {
+    Variations(Vec<Variation>),
+    NamedInstance(NamedInstanceInfo),
 }
 
-pub struct ShaperSettings<'a, V, F>
-where
-    V: IntoIterator,
-    V::Item: Into<Variation>,
-    F: IntoIterator,
-    F::Item: Into<Feature>,
-{
-    instance_settings: Option<ShaperInstanceSettings<'a, V>>,
-    shape_features: Option<F>,
+impl ShaperInstanceSettings {
+    pub fn variations(variations: impl IntoIterator<Item: Into<Variation>>) -> Self {
+        Self::Variations(variations.into_iter().map(|v| v.into()).collect())
+    }
+
+    pub fn named_instance(named_instance_info: &NamedInstanceInfo) -> Self {
+        Self::NamedInstance(named_instance_info.clone())
+    }
+}
+
+impl std::fmt::Display for ShaperInstanceSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Variations(variations) => write!(
+                f,
+                "Variations: {}",
+                variations
+                    .iter()
+                    .map(|v| format!("[{}:{}]", v.tag.to_string(), v.value))
+                    .collect::<Vec<String>>()
+                    .join(", ")
+            ),
+            Self::NamedInstance(ni) => write!(f, "Named Instance: {}", ni.name),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShaperSettings {
+    instance_settings: Option<ShaperInstanceSettings>,
+    shape_features: Option<Vec<Feature>>,
+}
+
+impl ShaperSettings {
+    pub fn new(
+        instance_settings: Option<ShaperInstanceSettings>,
+        shape_features: Option<impl IntoIterator<Item: Into<Feature>>>,
+    ) -> Self {
+        Self {
+            instance_settings,
+            shape_features: shape_features
+                .map(|feats| feats.into_iter().map(|f| f.into()).collect()),
+        }
+    }
+}
+
+impl std::fmt::Display for ShaperSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut has_instance_settings: bool = false;
+        let mut has_features: bool = false;
+        let instance_settings_str: String = if let Some(ref is) = self.instance_settings {
+            has_instance_settings = true;
+            format!("{}", is)
+        } else {
+            "".to_string()
+        };
+        let features_str = if let Some(ref feats) = self.shape_features {
+            has_features = true;
+            format!(
+                "Features: [{}]",
+                feats
+                    .iter()
+                    .map(|f| format!("{}:{}", f.tag.to_string(), f.value))
+                    .collect::<Vec<String>>()
+                    .join(",")
+            )
+        } else {
+            "".to_string()
+        };
+
+        if has_instance_settings && has_features {
+            write!(f, "{}, {}", instance_settings_str, features_str)
+        } else if has_instance_settings {
+            write!(f, "{}", instance_settings_str)
+        } else if has_features {
+            write!(f, "{}", features_str)
+        } else {
+            write!(f, "[Default]")
+        }
+    }
 }
 
 pub struct FontShaper<'a> {
+    font_cache_ref: &'a FontCacheRef<'a>,
     font_ref: FontRef<'a>,
     shaper_data: &'a ShaperData,
+    shaper_settings: ShaperSettings,
     shaper_instance: ShaperInstance,
     features: Vec<Feature>,
 }
 
 impl<'a> FontShaper<'a> {
-    fn new<V, F>(
+    fn new(
+        font_cache_ref: &'a FontCacheRef<'a>,
         font: FontRef<'a>,
         shaper_data: &'a ShaperData,
-        shaper_settings: ShaperSettings<'a, V, F>,
-    ) -> FontShaper<'a>
-    where
-        V: IntoIterator,
-        V::Item: Into<Variation>,
-        F: IntoIterator,
-        F::Item: Into<Feature>,
-    {
+        shaper_settings: ShaperSettings,
+    ) -> FontShaper<'a> {
         //let shaper_data = ShaperData::new(&font);
 
         let shaper_instance = match shaper_settings.instance_settings {
-            Some(ShaperInstanceSettings::Variations(variations)) => {
+            Some(ShaperInstanceSettings::Variations(ref variations)) => {
                 ShaperInstance::from_variations(&font, variations)
             }
-            Some(ShaperInstanceSettings::NamedInstance(ni)) => {
+            Some(ShaperInstanceSettings::NamedInstance(ref ni)) => {
                 ShaperInstance::from_named_instance(&font, ni.named_instance_index)
             }
             None => ShaperInstance::from_variations(&font, &[] as &[Variation]),
         };
 
         let features = shaper_settings
+            .clone()
             .shape_features
             .map(|f| {
                 f.into_iter()
@@ -1187,26 +1214,40 @@ impl<'a> FontShaper<'a> {
             .unwrap_or_default();
 
         Self {
+            font_cache_ref,
             font_ref: font,
             shaper_data,
+            shaper_settings,
             shaper_instance: shaper_instance,
             features,
         }
     }
 
-    pub fn shaper(&'a mut self) -> Shaper<'a> {
-        /*if let Some(vars) = variations {
-            self.shaper_instance.set_variations(&self.font_ref, vars);
-        }*/
-        self.shaper_data
-            .shaper(&self.font_ref.clone())
-            .instance(Some(&self.shaper_instance))
-            .point_size(None)
-            .build()
+    pub fn with_settings(mut self, settings: ShaperSettings) -> Self {
+        if settings == self.shaper_settings {
+            return self;
+        }
+        if let Some(instance_settings) = settings.instance_settings {
+            match instance_settings {
+                ShaperInstanceSettings::Variations(variations) => self
+                    .shaper_instance
+                    .set_variations(&self.font_ref, variations),
+                ShaperInstanceSettings::NamedInstance(ni) => self
+                    .shaper_instance
+                    .set_named_instance(&self.font_ref, ni.named_instance_index),
+            }
+        }
+
+        if let Some(shape_features) = settings.shape_features {
+            self.features = shape_features
+        }
+
+        self
     }
 
     pub fn shape(&'a self, line: &str, input_buffer: Option<UnicodeBuffer>) -> GlyphBuffer {
-        let mut buffer = if let Some(input_buffer) = input_buffer {
+        let mut buffer = if let Some(mut input_buffer) = input_buffer {
+            input_buffer.clear();
             input_buffer
         } else {
             UnicodeBuffer::new()
@@ -1225,7 +1266,10 @@ impl<'a> FontShaper<'a> {
             .build();
         let result = shaper.shape(buffer, &self.features);
         eprintln!(
-            "{}",
+            "shaping \"{}\" in font \"{}\" with settings: {{ {} }}\n  {}",
+            line,
+            self.font_cache_ref.full_name(),
+            self.shaper_settings,
             result.serialize(&shaper, harfrust::SerializeFlags::empty())
         );
         result
