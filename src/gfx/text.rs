@@ -1,22 +1,24 @@
-use std::cell::{Ref, RefCell, UnsafeCell};
+use std::cell::UnsafeCell;
 use std::ffi::OsStr;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::path::{Display, PathBuf};
-use std::rc::Rc;
+use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, OnceLock};
 use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result};
 use harfrust::{
-    Feature, GlyphBuffer, Language, Shaper, ShaperData, ShaperInstance, UnicodeBuffer, Variation,
+    Feature, GlyphBuffer, Shaper, ShaperData, ShaperInstance, UnicodeBuffer, Variation,
 };
+use parking_lot::Mutex;
 use rayon::prelude::*;
 use skrifa::metrics::Metrics;
 use skrifa::raw::TableProvider;
 use skrifa::{Axis, prelude::*};
 use smallvec::SmallVec;
 use thiserror::Error;
+use typed_arena::Arena;
+use zeno::PathBuilder;
 
 use crate::os::font_util;
 
@@ -113,10 +115,10 @@ impl NamedInstanceInfo {
     }
 }
 
-#[derive(Clone)]
 pub struct FontCacheRef<'a> {
     font_cache: &'a FontCache,
     cache_index: usize,
+    font_ref: UnsafeCell<Option<Box<FontRef<'a>>>>,
 }
 
 impl<'a> FontCacheRef<'a> {
@@ -196,104 +198,13 @@ Font Family: {}
         &self.font_cache.font_datas[self.cache_index].revision
     }
 
-    fn to_font_ref(&'a self) -> FontRef<'a> {
-        let font_data = &self.font_cache.font_datas[self.cache_index];
+    fn to_font_ref(&self) -> FontRef<'_> {
         FontRef::from_index(
-            &self.font_cache.all_raw_data[font_data.raw_data_range.clone()],
-            font_data.font_ref_idx,
+            self.font_cache.font_datas[self.cache_index].raw_data_ref,
+            self.font_cache.font_datas[self.cache_index].font_ref_idx,
         )
-        .expect("Unable to obtain FontRef for already cached font!")
+        .expect("Unable to create FontRef for cached font")
     }
-
-    /*fn shaper_instance<V>(
-        &'a self,
-        settings: Option<ShaperInstanceSettings<V>>,
-    ) -> Option<Ref<'a, ShaperInstance>>
-    where
-        V: IntoIterator<Item = Variation>,
-    {
-        let shaper_instance = &self.font_cache.font_datas[self.cache_index].shaper_instance;
-        let font_ref = self.to_font_ref();
-        match settings {
-            Some(ShaperInstanceSettings::Variations(variations)) => {
-                shaper_instance
-                    .borrow_mut()
-                    .unwrap()
-                    .set_variations(&font_ref, variations);
-            }
-            Some(ShaperInstanceSettings::NamedInstance(named_instance_info)) => {
-                shaper_instance
-                    .borrow_mut()
-                    .unwrap()
-                    .set_named_instance(&font_ref, named_instance_info.named_instance_index);
-            }
-            None => {}
-        }
-
-        shaper_instance.borrow()
-    }*/
-
-    /*fn shaper_instance_settings<V>(&'a mut self, settings: ShaperInstanceSettings<V>) -> Result<()>
-    where
-        V: IntoIterator<Item = Variation>,
-    {
-        {
-            //let shaper_instance = self.shaper_instance.as_mut();
-            if let None = self.shaper_instance {
-                self.shaper_instance = Some(ShaperInstance::from_variations(
-                    &self.to_font_ref(),
-                    &[] as &[Variation],
-                ));
-            }
-        }
-
-        let font_ref = &self.to_font_ref();
-
-        let shaper_instance = &mut self.shaper_instance.as_mut().unwrap();
-        match settings {
-            ShaperInstanceSettings::Variations(variations) => {
-                shaper_instance.set_variations(&font_ref, variations);
-            }
-            ShaperInstanceSettings::NamedInstance(named_instance_info) => {
-                shaper_instance
-                    .set_named_instance(&font_ref, named_instance_info.named_instance_index);
-            }
-        }
-
-        Ok(())
-    }*/
-
-    /*fn shaper<V>(&'a self, settings: Option<ShaperInstanceSettings<V>>) -> Shaper<'a>
-    where
-        V: IntoIterator<Item = Variation>,
-    {
-        let shaper_instance = self.font_cache.font_datas[self.cache_index].shaper_instance;
-        let font_ref = self.to_font_ref();
-        if let Some(settings) = settings {
-            match settings {
-                ShaperInstanceSettings::Variations(variations) => {
-                    shaper_instance
-                        .borrow_mut()
-                        .as_mut()
-                        .map(|si| si.set_variations(&font_ref, variations));
-                    //.set_variations(&font_ref, variations);
-                }
-                ShaperInstanceSettings::NamedInstance(named_instance_info) => {
-                    shaper_instance.borrow_mut().as_mut().map(|si| {
-                        si.set_named_instance(&font_ref, named_instance_info.named_instance_index)
-                    });
-                }
-            }
-        }
-        let shaper = self
-            .shaper_data()
-            .shaper(&self.to_font_ref())
-            .instance(shaper_instance.borrow().as_ref())
-            .point_size(None)
-            .build();
-
-        shaper
-    }*/
 }
 
 impl<'a> std::fmt::Display for FontCacheRef<'a> {
@@ -368,18 +279,29 @@ impl<'a> std::hash::Hash for FontCacheRef<'a> {
     }
 }
 
+impl<'a> std::clone::Clone for FontCacheRef<'a> {
+    fn clone(&self) -> Self {
+        // Safety: font_ref is never uninitialized
+        let f = unsafe { &*self.font_ref.get() };
+        Self {
+            font_cache: self.font_cache,
+            cache_index: self.cache_index.clone(),
+            font_ref: UnsafeCell::new(f.clone()),
+        }
+    }
+}
+
 struct FontCacheData {
+    raw_data_ref: &'static [u8],
     font_ref_idx: u32,
-    raw_data_range: std::ops::Range<usize>,
     family_name: String,
     subfamily_name: Option<String>,
     revision: skrifa::raw::types::Fixed,
-    unscaled_default_metrics: Metrics,
     variation_axes: SmallVec<[Axis; 4]>,
     named_instances: SmallVec<[NamedInstanceInfo; 8]>,
     features: SmallVec<[String; 32]>,
-    shaper_data: UnsafeCell<Option<Box<ShaperData>>>,
-    shaper_instance: ShaperInstance,
+
+    shaper_data: OnceLock<Box<ShaperData>>,
 }
 
 impl std::fmt::Debug for FontCacheData {
@@ -390,7 +312,6 @@ impl std::fmt::Debug for FontCacheData {
             .field("family_name", &self.family_name)
             .field("subfamily_name", &self.subfamily_name)
             .field("revision", &self.revision)
-            .field("unscaled_default_metrics", &self.unscaled_default_metrics)
             .field(
                 "variation_axes",
                 &self
@@ -419,7 +340,6 @@ struct RawFontCacheData {
     family_name: String,
     subfamily_name: Option<String>,
     revision: skrifa::raw::types::Fixed,
-    unscaled_default_metrics: Metrics,
     variation_axes: SmallVec<[Axis; 4]>,
     named_instances: SmallVec<[NamedInstanceInfo; 8]>,
     features: SmallVec<[String; 32]>,
@@ -431,7 +351,7 @@ enum RawCacheResult {
     },
     New {
         path: PathBuf,
-        raw_data: Vec<u8>,
+        raw_data_ref: &'static [u8],
         raw_data_hash: u64,
         font_file_type: FontFileType,
         font_datas: Vec<RawFontCacheData>,
@@ -453,12 +373,11 @@ enum CacheResult {
 }
 
 pub struct FontCache {
-    all_raw_data: Vec<u8>,
-    raw_data_hashes_to_paths: HashMap<u64, PathBuf>,
     paths: Vec<PathBuf>,
-    paths_to_font_idxs: HashMap<PathBuf, SmallVec<[usize; 16]>>,
-    paths_to_data_ranges: HashMap<PathBuf, std::ops::Range<usize>>,
     font_file_types: Vec<FontFileType>,
+    paths_to_font_idxs: HashMap<PathBuf, SmallVec<[usize; 16]>>,
+    paths_to_data_refs: HashMap<PathBuf, &'static [u8]>,
+    raw_data_hashes_to_paths: HashMap<u64, PathBuf>,
 
     font_datas: Vec<FontCacheData>,
 }
@@ -467,11 +386,10 @@ pub struct FontCache {
 impl FontCache {
     pub fn new() -> Self {
         Self {
-            all_raw_data: Vec::new(),
             raw_data_hashes_to_paths: HashMap::new(),
             paths: Vec::new(),
             paths_to_font_idxs: HashMap::new(),
-            paths_to_data_ranges: HashMap::new(),
+            paths_to_data_refs: HashMap::new(),
             font_file_types: Vec::new(),
 
             font_datas: Vec::new(),
@@ -520,7 +438,7 @@ impl FontCache {
     }
 
     pub fn data_size(&self) -> usize {
-        self.all_raw_data.len()
+        self.raw_data().lock().len()
     }
 
     pub fn load_multiple_font_files(&mut self, paths: Vec<impl Into<PathBuf>>) -> Result<usize> {
@@ -533,7 +451,7 @@ impl FontCache {
             .map(|path| path.into())
             .collect::<Vec<PathBuf>>()
             .into_par_iter()
-            .map(|path| Self::load_raw_data(path, raw_data_hashes_to_paths.clone()))
+            .map(|path| Self::load_raw_data(&self, path, raw_data_hashes_to_paths.clone()))
             .collect();
 
         let mut result_idxs: Vec<usize> = Vec::with_capacity(result_count_heuristic);
@@ -564,7 +482,11 @@ impl FontCache {
     pub fn load_font_file(&mut self, path: impl Into<PathBuf>) -> Result<()> {
         let path: PathBuf = path.into();
         let raw_data_hashes_to_paths = Arc::new(&self.raw_data_hashes_to_paths);
-        self.store_raw_data(Self::load_raw_data(&path, raw_data_hashes_to_paths.clone()))?;
+        self.store_raw_data(Self::load_raw_data(
+            &self,
+            &path,
+            raw_data_hashes_to_paths.clone(),
+        ))?;
         Ok(())
     }
 
@@ -609,6 +531,7 @@ impl FontCache {
             Ok(FontCacheRef {
                 font_cache: &self,
                 cache_index: family_idxs[0],
+                font_ref: UnsafeCell::new(None),
             })
         } else {
             Err(FontError::NotCached {
@@ -670,6 +593,7 @@ impl FontCache {
                     .map(|(idx, _)| FontCacheRef {
                         font_cache: &self,
                         cache_index: idx,
+                        font_ref: UnsafeCell::new(None),
                     }),
             );
         }
@@ -684,10 +608,18 @@ impl FontCache {
         FontCacheRef {
             font_cache: &self,
             cache_index: cache_index,
+            font_ref: UnsafeCell::new(None),
         }
     }
 
+    fn raw_data(&self) -> &Mutex<Arena<&'static [u8]>> {
+        static DATA: LazyLock<Mutex<Arena<&'static [u8]>>> =
+            LazyLock::new(|| Mutex::new(Arena::new()));
+        &DATA
+    }
+
     fn load_raw_data(
+        &self,
         path: impl AsRef<Path>,
         raw_data_hashes_to_paths: Arc<&HashMap<u64, PathBuf>>,
     ) -> Result<RawCacheResult> {
@@ -706,13 +638,18 @@ impl FontCache {
 
         // Check if an already parsed file contained identical data
         if let Some(p) = raw_data_hashes_to_paths.get(&raw_data_hash) {
-            return Ok(RawCacheResult::AlreadyCached {
-                path: path.as_ref().into(),
-            });
+            return Ok(RawCacheResult::AlreadyCached { path: p.clone() });
         }
 
+        let raw_data_ref: &'static [u8] = {
+            let data = self.raw_data();
+            let _ = data.lock();
+            let raw = unsafe { &*data.data_ptr() };
+            raw.alloc(raw_bytes.leak())
+        };
+
         // Load the data with skrifa
-        let file_ref: skrifa::raw::FileRef = skrifa::raw::FileRef::new(&raw_bytes)?;
+        let file_ref: skrifa::raw::FileRef = skrifa::raw::FileRef::new(raw_data_ref)?;
 
         // the font_ref_idx (used by FontRef::from_index). Will be incremented at the start of the loop,
         // so init to -1
@@ -776,15 +713,12 @@ impl FontCache {
             features.sort();
             features.dedup();
 
-            let metrics = font.metrics(Size::unscaled(), LocationRef::default());
-
             font_datas.push(RawFontCacheData {
                 font_ref_idx: font_ref_idx as u32,
                 //raw_data_range: raw_data_range.clone(),
                 family_name,
                 subfamily_name,
                 revision: font_revision,
-                unscaled_default_metrics: metrics,
                 variation_axes: axes,
                 named_instances,
                 features,
@@ -793,7 +727,7 @@ impl FontCache {
 
         Ok(RawCacheResult::New {
             path: path.as_ref().into(),
-            raw_data: raw_bytes,
+            raw_data_ref,
             raw_data_hash,
             font_file_type,
             font_datas,
@@ -805,30 +739,25 @@ impl FontCache {
             return Err(raw_cache_data.err().unwrap());
         }
         let raw_cache_data = raw_cache_data.unwrap();
-        let (path, raw_data, raw_data_hash, font_file_type, font_datas) = match raw_cache_data {
+        let (path, raw_data_ref, raw_data_hash, font_file_type, font_datas) = match raw_cache_data {
             RawCacheResult::New {
                 path,
-                raw_data,
+                raw_data_ref,
                 raw_data_hash,
                 font_file_type,
                 font_datas,
-            } => (path, raw_data, raw_data_hash, font_file_type, font_datas),
+            } => (
+                path,
+                raw_data_ref,
+                raw_data_hash,
+                font_file_type,
+                font_datas,
+            ),
             RawCacheResult::AlreadyCached { path } => {
                 let idxs = self.paths_to_font_idxs.get(&path).unwrap().clone();
                 return Ok(CacheResult::AlreadyCached { path, idxs });
             }
         };
-
-        // Construct the range (window) on all the cached raw data that will correspond to the data in this file
-        let raw_data_len = raw_data.len();
-        let start_index = self.all_raw_data.len();
-        let end_index = start_index + raw_data_len;
-        assert_eq!(
-            end_index - start_index,
-            raw_data_len,
-            "font cache: the calculated range is not equal to the length of the inserted data"
-        );
-        let raw_data_range = start_index..end_index;
 
         // new_font_datas.len() + replace_font_datas.len() + skipped_font_datas should equal the number
         // of fonts in the file_ref
@@ -839,20 +768,15 @@ impl FontCache {
 
         for raw_font_cache_data in font_datas {
             let fd = FontCacheData {
+                raw_data_ref,
                 font_ref_idx: raw_font_cache_data.font_ref_idx,
-                raw_data_range: raw_data_range.clone(),
                 family_name: raw_font_cache_data.family_name,
                 subfamily_name: raw_font_cache_data.subfamily_name,
                 revision: raw_font_cache_data.revision,
-                unscaled_default_metrics: raw_font_cache_data.unscaled_default_metrics,
                 variation_axes: raw_font_cache_data.variation_axes,
                 named_instances: raw_font_cache_data.named_instances,
                 features: raw_font_cache_data.features,
-                shaper_data: UnsafeCell::new(None),
-                shaper_instance: ShaperInstance::from_variations(
-                    &FontRef::from_index(&raw_data, raw_font_cache_data.font_ref_idx)?,
-                    &[] as &[Variation],
-                ),
+                shaper_data: OnceLock::new(),
             };
             // Check if an this font is the same family + subfamily, but with "better"
             // properties
@@ -904,8 +828,7 @@ impl FontCache {
 
             self.paths_to_font_idxs
                 .insert(path.clone(), SmallVec::default());
-            self.paths_to_data_ranges
-                .insert(path.clone(), std::ops::Range::default());
+            self.paths_to_data_refs.insert(path.clone(), raw_data_ref);
 
             return Ok(CacheResult::NoNewData(path));
         }
@@ -962,23 +885,9 @@ impl FontCache {
             path.to_string_lossy()
         );
 
-        // the raw data ranges of all the paths + the new raw data range
-        // should equal the length of the existing raw data + the length of the new raw data
-        debug_assert_eq!(
-            self.paths_to_data_ranges
-                .values()
-                .map(|r| r.len())
-                .sum::<usize>()
-                + raw_data_range.len(),
-            self.all_raw_data.len() + &raw_data.len(),
-            "{}",
-            path.to_string_lossy()
-        );
-
         // add path and hash related stuff
         // need to do this now because we need this data to properly process
         // replacements
-        self.all_raw_data.extend(raw_data);
         self.paths.push(path.clone());
         self.raw_data_hashes_to_paths
             .insert(raw_data_hash, path.clone());
@@ -990,8 +899,7 @@ impl FontCache {
         self.paths_to_font_idxs
             .insert(path.clone(), path_to_font_idxs.clone());
 
-        self.paths_to_data_ranges
-            .insert(path.clone(), raw_data_range);
+        self.paths_to_data_refs.insert(path.clone(), raw_data_ref);
 
         for font_data in replace_font_datas {
             let old_paths: Vec<&PathBuf> = self
@@ -1053,54 +961,14 @@ impl FontCache {
 
     fn shaper_data<'a>(&'a self, font_cache_ref: &FontCacheRef<'_>) -> &'a ShaperData {
         let font_data = &self.font_datas[font_cache_ref.cache_index];
-
-        // Safety: FontCacheData initialization sets shaper_data to None.
-        // The only place where shaper_data can be mutated is here, and only once.
-        // The only place where references to shaper_data can be obtained from is here.
-        // The return value's lifetime is tied to the font cache
-        let value = unsafe {
-            let maybe_shaper = &mut *font_data.shaper_data.get();
-            if let None = maybe_shaper {
-                *maybe_shaper = Some(Box::new(ShaperData::new(&FontRef::from_index(&self.all_raw_data[font_data.raw_data_range.clone()], font_data.font_ref_idx).expect(&format!("Failed to construct FontRef from FontCacheData (for {}; cache_idx: {}, font_ref_idx:{})", font_cache_ref.full_name(), font_cache_ref.cache_index, font_data.font_ref_idx)))));
-            }
-            &*maybe_shaper
-        };
-
-        // Value is guaranteed to be initialized with Some(Box(ShaperData)) at this point
-        value.as_deref().unwrap()
-    }
-
-    pub fn font_shaper<'a>(
-        &'a self,
-        font_cache_ref: &'a FontCacheRef<'a>,
-        settings: Option<ShaperSettings>,
-    ) -> FontShaper<'a> {
-        FontShaper::new(
-            font_cache_ref,
-            font_cache_ref.to_font_ref(),
-            &self.shaper_data(font_cache_ref),
-            settings.unwrap_or_else(|| ShaperSettings {
-                instance_settings: None,
-                shape_features: None,
-            }),
-        )
+        font_data.shaper_data.get_or_init(|| Box::new(ShaperData::new(&FontRef::from_index(font_data.raw_data_ref, font_data.font_ref_idx).expect(&format!("Failed to construct FontRef from FontCacheData (for {}; cache_idx: {}, font_ref_idx:{})", font_cache_ref.full_name(), font_cache_ref.cache_index, font_data.font_ref_idx)))))
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ShaperInstanceSettings {
+enum ShaperInstanceSettings {
     Variations(Vec<Variation>),
     NamedInstance(NamedInstanceInfo),
-}
-
-impl ShaperInstanceSettings {
-    pub fn variations(variations: impl IntoIterator<Item: Into<Variation>>) -> Self {
-        Self::Variations(variations.into_iter().map(|v| v.into()).collect())
-    }
-
-    pub fn named_instance(named_instance_info: &NamedInstanceInfo) -> Self {
-        Self::NamedInstance(named_instance_info.clone())
-    }
 }
 
 impl std::fmt::Display for ShaperInstanceSettings {
@@ -1127,14 +995,45 @@ pub struct ShaperSettings {
 }
 
 impl ShaperSettings {
-    pub fn new(
-        instance_settings: Option<ShaperInstanceSettings>,
-        shape_features: Option<impl IntoIterator<Item: Into<Feature>>>,
-    ) -> Self {
+    pub fn new() -> Self {
         Self {
-            instance_settings,
-            shape_features: shape_features
-                .map(|feats| feats.into_iter().map(|f| f.into()).collect()),
+            instance_settings: None,
+            shape_features: None,
+        }
+    }
+
+    pub fn with_variations(mut self, variations: impl IntoIterator<Item: Into<Variation>>) -> Self {
+        self.instance_settings = Some(ShaperInstanceSettings::Variations(
+            variations.into_iter().map(|v| v.into()).collect(),
+        ));
+        self
+    }
+
+    pub fn with_named_instance(mut self, named_instance: NamedInstanceInfo) -> Self {
+        self.instance_settings = Some(ShaperInstanceSettings::NamedInstance(named_instance));
+        self
+    }
+
+    pub fn with_features(mut self, features: impl IntoIterator<Item: Into<Feature>>) -> Self {
+        self.shape_features = Some(features.into_iter().map(|f| f.into()).collect());
+        self
+    }
+
+    pub fn coords<'a>(&self, font: &'a FontCacheRef<'a>) -> skrifa::instance::Location {
+        match &self.instance_settings {
+            Some(si) => match si {
+                ShaperInstanceSettings::Variations(variations) => {
+                    font.to_font_ref().axes().location(
+                        variations
+                            .iter()
+                            .map(|v| skrifa::setting::VariationSetting::new(v.tag, v.value)),
+                    )
+                }
+                ShaperInstanceSettings::NamedInstance(named_instance_info) => {
+                    named_instance_info.coords.clone()
+                }
+            },
+            None => skrifa::instance::Location::default(),
         }
     }
 }
@@ -1187,7 +1086,7 @@ pub struct FontShaper<'a> {
 impl<'a> FontShaper<'a> {
     fn new(
         font_cache_ref: &'a FontCacheRef<'a>,
-        font: FontRef<'a>,
+        font: &'a FontRef<'a>,
         shaper_data: &'a ShaperData,
         shaper_settings: ShaperSettings,
     ) -> FontShaper<'a> {
@@ -1215,7 +1114,7 @@ impl<'a> FontShaper<'a> {
 
         Self {
             font_cache_ref,
-            font_ref: font,
+            font_ref: font.clone(),
             shaper_data,
             shaper_settings,
             shaper_instance: shaper_instance,
@@ -1255,14 +1154,15 @@ impl<'a> FontShaper<'a> {
 
         buffer.push_str(line);
 
-        buffer.set_language(Language::from_str("en").unwrap());
-        buffer.guess_segment_properties();
+        buffer.set_direction(harfrust::Direction::LeftToRight);
+        buffer.set_script(harfrust::Script::from_str("Latn").unwrap());
+        buffer.set_language(harfrust::Language::from_str("en").unwrap());
 
         let shaper = self
             .shaper_data
             .shaper(&self.font_ref)
             .instance(Some(&self.shaper_instance))
-            .point_size(None)
+            //.point_size(None)
             .build();
         let result = shaper.shape(buffer, &self.features);
         eprintln!(
@@ -1272,8 +1172,225 @@ impl<'a> FontShaper<'a> {
             self.shaper_settings,
             result.serialize(&shaper, harfrust::SerializeFlags::empty())
         );
+        eprintln!("{:?}", result);
+
+        let row_size = 2048usize;
+
+        let mut glyph_cache = GlyphCache::new(row_size, row_size);
+
+        let outlines = self.font_ref.outline_glyphs();
+
+        //let mut rasterizer = Rasterizer::new(outlines);
+
+        let ppem: usize = 32;
+
+        let size = skrifa::instance::Size::new(ppem as f32);
+        let coords = self.shaper_settings.coords(&self.font_cache_ref);
+
+        //let mut buffer = vec![0u8; row_size * row_size];
+
+        /*let mut bounds: Vec<etagere::euclid::Box2D<i32, etagere::euclid::UnknownUnit>> = result
+        .glyph_infos()
+        .into_iter()
+        .map(|info| {
+            glyph_cache.ensure_glyph_cached(
+                &self.font_cache_ref,
+                size,
+                coords.clone(),
+                (info.glyph_id).into(),
+            )
+        })
+        .collect();*/
+
+        let mut bounds: Vec<etagere::euclid::Box2D<i32, etagere::euclid::UnknownUnit>> = Vec::new();
+
+        //glyph_cache.cache_glyph_buffer(result);
+
+        /*for i in 0..result.len() {
+            let info = result.glyph_infos()[i];
+            let pos = result.glyph_positions()[i];
+
+            glyph_cache.ensure_glyph_cached(
+                self.font_cache_ref,
+                size,
+                coords.clone(),
+                info.glyph_id.into(),
+            );
+        }*/
+
+        for i in 0..bounds.len() {
+            let start_pos = (bounds[i].min.y as usize) * row_size + (bounds[i].min.x as usize);
+
+            let mut out_buffer = String::with_capacity(ppem * ppem);
+
+            out_buffer.push_str("|");
+            for _ in 0..2 * ppem {
+                out_buffer.push_str("-");
+            }
+            out_buffer.push_str("|\n");
+            for j in 0..ppem {
+                out_buffer.push_str("|");
+                for k in 0..2 * ppem {
+                    //out_buffer.push_str(&format!("{} ", start_pos + j * row_size + k / 2));
+                    let val = &glyph_cache.texture[start_pos + j * row_size + k / 2];
+                    let pt = if val > &210 {
+                        "@"
+                    } else if val > &140 {
+                        "8"
+                    } else if val > &80 {
+                        "o"
+                    } else if val > &20 {
+                        "."
+                    } else {
+                        " "
+                    };
+                    out_buffer.push_str(pt);
+                }
+                out_buffer.push_str("|\n");
+            }
+            out_buffer.push_str("|");
+            for _ in 0..2 * ppem {
+                out_buffer.push_str("-")
+            }
+            out_buffer.push_str("|\n");
+
+            eprintln!("{}", out_buffer);
+        }
+
         result
     }
 }
 
-pub struct Glyph {}
+pub struct Rasterizer<'a> {
+    path: Vec<zeno::Command>,
+    outlines: skrifa::outline::OutlineGlyphCollection<'a>,
+    draw_buffer: Vec<u8>,
+}
+
+impl<'a> Rasterizer<'a> {
+    pub fn new(outlines: skrifa::outline::OutlineGlyphCollection<'a>) -> Self {
+        Self {
+            path: Vec::new(),
+            outlines,
+            draw_buffer: Vec::new(),
+        }
+    }
+
+    pub fn render_mask(
+        &mut self,
+        glyph_id: GlyphId,
+        size: skrifa::instance::Size,
+        coords: skrifa::instance::Location,
+        buffer: &mut [u8],
+        start: usize,
+        row_size: usize,
+    ) {
+        self.path.clear();
+        self.draw_buffer.clear();
+
+        let px_size = size.ppem().unwrap().floor() as u32;
+        let draw_settings = skrifa::outline::DrawSettings::unhinted(size, &coords);
+        let glyph_outline = self.outlines.get(glyph_id).unwrap();
+        glyph_outline.draw(draw_settings, self).unwrap();
+        zeno::Mask::new(&self.path)
+            .origin(zeno::Origin::BottomLeft)
+            .size(px_size, px_size)
+            .inspect(|format, width, height| {
+                self.draw_buffer
+                    .resize(format.buffer_size(width, height), 0);
+            })
+            .render_into(&mut buffer[start..], Some(row_size));
+        //&self.draw_buffer[0..buffer_end]
+    }
+}
+
+impl<'a> skrifa::outline::OutlinePen for Rasterizer<'a> {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.path.move_to([x, y]);
+    }
+
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.path.line_to([x, y]);
+    }
+
+    fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
+        self.path.quad_to([cx0, cy0], [x, y]);
+    }
+
+    fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
+        self.path.curve_to([cx0, cy0], [cx1, cy1], [x, y]);
+    }
+
+    fn close(&mut self) {
+        self.path.close();
+    }
+}
+
+pub struct GlyphCache<'a> {
+    texture_row_size: usize,
+    texture_rows: usize,
+    atlas: etagere::AtlasAllocator,
+    pub texture: Vec<u8>,
+    rasterizer_map: HashMap<FontCacheRef<'a>, Rasterizer<'a>>,
+    glyph_map:
+        HashMap<(FontCacheRef<'a>, GlyphId, u32, skrifa::instance::Location), etagere::AllocId>,
+}
+
+impl<'a> GlyphCache<'a> {
+    pub fn new(texture_row_size: usize, texture_rows: usize) -> Self {
+        Self {
+            texture_rows,
+            texture_row_size,
+            atlas: etagere::AtlasAllocator::new(etagere::size2(
+                texture_row_size as i32,
+                texture_rows as i32,
+            )),
+            texture: vec![0u8; texture_row_size * texture_rows],
+            rasterizer_map: HashMap::new(),
+            glyph_map: HashMap::new(),
+        }
+    }
+
+    //pub fn cache_glyph_buffer(
+
+    //)
+
+    pub fn ensure_glyph_cached(
+        &'a mut self,
+        font: &'a FontCacheRef<'a>,
+        size: skrifa::instance::Size,
+        coords: skrifa::instance::Location,
+        glyph_id: GlyphId,
+    ) {
+        let rounded_size = size.ppem().unwrap().floor() as u32;
+
+        if let Some(_) = self
+            .glyph_map
+            .get(&(font.clone(), glyph_id, rounded_size, coords.clone()))
+        {
+            return;
+        }
+
+        let rasterizer: &mut Rasterizer = self
+            .rasterizer_map
+            .entry(font.clone())
+            .or_insert(Rasterizer::new(font.to_font_ref().outline_glyphs()));
+
+        let allocation = self
+            .atlas
+            .allocate(etagere::size2(rounded_size as i32, rounded_size as i32))
+            .unwrap();
+
+        let start = (allocation.rectangle.min.y as usize) * self.texture_row_size
+            + (allocation.rectangle.min.x) as usize;
+
+        rasterizer.render_mask(
+            glyph_id,
+            size,
+            coords,
+            &mut self.texture,
+            start,
+            self.texture_row_size,
+        );
+    }
+}
