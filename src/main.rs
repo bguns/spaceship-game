@@ -4,14 +4,14 @@ mod input;
 #[cfg_attr(windows, path = "os/windows/mod.rs")]
 mod os;
 
-use crate::gfx::text::FontCacheRef;
+use crate::gfx::text::FontRef;
 use anyhow::Result;
 
 use device_query::{DeviceState, Keycode};
 
 use cgmath::prelude::*;
 use gfx::text::ShaperSettings;
-use harfrust::{Feature, FontRef, Variation};
+use harfrust::{Feature, Variation};
 use parking_lot::Mutex;
 use typed_arena::Arena;
 use winit::{
@@ -349,8 +349,8 @@ struct RefDataCollection<'a> {
 #[allow(unreachable_code)]
 fn main() -> Result<()> {
     rayon::ThreadPoolBuilder::new().build_global()?;
-    //let system_fonts = font_util::load_system_font_paths()?;
-    //let mut font_cache = FontCache::new();
+    let system_fonts = font_util::load_system_font_paths()?;
+    let mut font_cache = FontCache::new();
 
     let timer = Instant::now();
 
@@ -401,7 +401,7 @@ fn main() -> Result<()> {
         let _ = font_cache.load_font_file(font_path);
         result += 1;
     }*/
-    /*{
+    {
         let result = font_cache.load_system_fonts()?;
         eprintln!(
             "cached {} system fonts in {} ms",
@@ -409,17 +409,17 @@ fn main() -> Result<()> {
             timer.elapsed().as_millis()
         );
         //result.sort();
-    }*/
+    }
 
-    /*eprintln!(
+    eprintln!(
         "font cache data size: {} MiB",
-        font_cache.data_size() as f32 / 1048576.0f32
-    );*/
+        font_cache.raw_data_size() as f32 / 1048576.0f32
+    );
 
     //font_cache.list_fonts(true);
 
-    //font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
-    //font_cache.load_font_file("./fonts/cascadia-code/Cascadia.ttf")?;
+    font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
+    font_cache.load_font_file("./fonts/westwood-studio/Westwood Studio.ttf")?;
 
     // eprintln!("{:?}", cascadia);
     // let source_serif_ref = font_cache.to_font_ref(&source_serif[0]);
@@ -438,17 +438,19 @@ fn main() -> Result<()> {
 
     //let cascadia = &font_cache.search_fonts("cascadia code regular")[0];
 
-    /*let font = &font_cache.search_fonts("source serif variable regular")[0];
+    let font = &font_cache.search_fonts("source serif variable regular")[0];
+    //let font = &font_cache.search_fonts("westwood studio")[0];
+    //let font = &font_cache.search_fonts("cambria regular")[0];
 
-    let shaper_settings = Some(ShaperSettings::new().with_features([
+    let shaper_settings = ShaperSettings::new().with_features([
         Feature::from_str("+kern").unwrap(),
         Feature::from_str("+liga").unwrap(),
         Feature::from_str("+dlig").unwrap(),
-    ]));
+    ]);
 
-    let shaper = font_cache.font_shaper(font, shaper_settings);
+    let shaper = font.shaper(shaper_settings);
     let text = "fifi=>fi";
-    let glyph_buffer = shaper.shape(text, None);*/
+    //let glyph_buffer = shaper.shape(text, None, Default::default());
 
     /*for i in 0..glyph_buffer.len() {
         let info = glyph_buffer.glyph_infos()[i];
@@ -469,14 +471,14 @@ fn main() -> Result<()> {
 
     //eprintln!("{}", source_serif_ref.pretty_print());
     //eprintln!("{:?}", cascadia_refs);
-    /*env_logger::init();
+    env_logger::init();
 
     let event_loop = EventLoop::new().unwrap();
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = App::new();
 
-    event_loop.run_app(&mut app).unwrap();*/
+    event_loop.run_app(&mut app).unwrap();
 
     Ok(())
 }

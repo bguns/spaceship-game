@@ -2,9 +2,10 @@ mod glyph_cache;
 pub mod text;
 mod vertex;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use pollster::FutureExt as _;
+use text::TextRenderer;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
@@ -27,7 +28,10 @@ pub struct GfxState {
     size: winit::dpi::PhysicalSize<u32>,
     screen_scale_factor: f32,
     render_pipeline: wgpu::RenderPipeline,
-    glyph_cache: GlyphCache,
+    //glyph_cache: GlyphCache,
+    text_renderer: TextRenderer,
+    cascadia_idx: usize,
+    westwood_idx: usize,
     vertex_buffer: wgpu::Buffer,
     glyph_index_buffer: wgpu::Buffer,
     line_vertex_buffer: wgpu::Buffer,
@@ -130,15 +134,18 @@ impl GfxState {
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
 
-        let mut glyph_cache =
-            GlyphCache::new(&device, size.width, size.height, screen_scale_factor);
+        // let mut glyph_cache =
+        // GlyphCache::new(&device, size.width, size.height, screen_scale_factor);
+
+        let mut text_renderer =
+            TextRenderer::new(&device, size.width, size.height, screen_scale_factor);
 
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Glyph Render Pipeline Layout"),
                 bind_group_layouts: &[
                     &surface_dimensions_bind_group_layout,
-                    &glyph_cache.texture_bind_group_layout,
+                    &text_renderer.texture_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             });
@@ -158,7 +165,20 @@ impl GfxState {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    //blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(wgpu::BlendState {
+                        // Dual source blending
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::Src1,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrc1,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrc1Alpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -200,10 +220,14 @@ impl GfxState {
         });
 
         let font_path_1 = std::path::PathBuf::from("./fonts/cascadia-code/Cascadia.ttf");
-        let _ = glyph_cache.cache_font(font_path_1);
+        let cascadia_idx = text_renderer
+            .cache_font(font_path_1)
+            .expect("unable to load cascadia")[0];
 
         let font_path_2 = std::path::PathBuf::from("./fonts/westwood-studio/Westwood Studio.ttf");
-        let _ = glyph_cache.cache_font(font_path_2);
+        let westwood_idx = text_renderer
+            .cache_font(font_path_2)
+            .expect("unable to load westwood")[0];
 
         let line_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("line_vertex_buffer"),
@@ -275,7 +299,9 @@ impl GfxState {
             size,
             screen_scale_factor,
             render_pipeline,
-            glyph_cache,
+            text_renderer,
+            cascadia_idx,
+            westwood_idx,
             vertex_buffer,
             glyph_index_buffer,
             line_vertex_buffer,
@@ -302,7 +328,8 @@ impl GfxState {
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::empty(),
+                required_features: wgpu::Features::empty()
+                    .union(wgpu::Features::DUAL_SOURCE_BLENDING),
                 required_limits: wgpu::Limits::default(),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 label: None,
@@ -331,8 +358,11 @@ impl GfxState {
                 0,
                 bytemuck::cast_slice(&[surface_dimensions_px_uniform]),
             );
-            self.glyph_cache
-                .surface_resized(new_size_apply.width, new_size_apply.height);
+            self.text_renderer.surface_resized(
+                new_size_apply.width,
+                new_size_apply.height,
+                self.screen_scale_factor,
+            );
         }
     }
 
@@ -382,14 +412,43 @@ impl GfxState {
                 timestamp_writes: None,
             });
 
-            let px_scale = self.glyph_cache.create_glyph_px_scale(128.0);
+            let font_size = skrifa::instance::Size::new(128.0 * self.screen_scale_factor);
 
-            self.glyph_cache.queue_write_texture_if_changed(&self.queue);
+            self.text_renderer
+                .queue_write_texture_if_changed(&self.queue);
 
-            self.glyph_cache.ensure_glyph_cached(0, 'a', px_scale);
-            self.glyph_cache.ensure_glyph_cached(0, 'b', px_scale);
+            let cascadia = &self
+                .text_renderer
+                .font_cache
+                .get_font(self.cascadia_idx)
+                .expect("unable to get loaded (?) cascadia FontRef");
 
-            let a_glyph = self
+            /*self.glyph_cache.ensure_glyph_cached(0, 'a', px_scale);
+            self.glyph_cache.ensure_glyph_cached(0, 'b', px_scale);*/
+
+            let shaper = cascadia.shaper(super::ShaperSettings::new());
+
+            let glyphs = shaper.shape("ab", None, Some(font_size.clone()));
+
+            let a_glyph_id = glyphs.glyph_infos()[0].glyph_id;
+
+            let a_uv_bounds = self.text_renderer.glyph_cache.get_glyph_texture_bounds(
+                &cascadia,
+                a_glyph_id.into(),
+                font_size,
+                Default::default(),
+            );
+
+            let b_glyph_id = glyphs.glyph_infos()[1].glyph_id;
+
+            let b_uv_bounds = self.text_renderer.glyph_cache.get_glyph_texture_bounds(
+                &cascadia,
+                b_glyph_id.into(),
+                font_size,
+                Default::default(),
+            );
+
+            /*let a_glyph = self
                 .glyph_cache
                 .try_get_cached_glyph_data(0, 'a', px_scale)
                 .unwrap();
@@ -397,28 +456,28 @@ impl GfxState {
             let b_glyph = self
                 .glyph_cache
                 .try_get_cached_glyph_data(0, 'b', px_scale)
-                .unwrap();
+                .unwrap();*/
 
             let mut glyph_vertices: Vec<GlyphVertex> = Vec::with_capacity(4000);
             let mut glyph_indices: Vec<u16> = Vec::with_capacity(6000);
 
-            self.glyph_cache.prepare_draw_for_glyph(
+            self.text_renderer.glyph_cache.prepare_draw_for_glyph(
                 &mut glyph_vertices,
                 &mut glyph_indices,
-                a_glyph,
+                (&a_uv_bounds).into(),
                 -1.0 + self.logical_px_to_horizontal_screen_space_offset(256),
                 1.0 - self.logical_px_to_vertical_screen_space_offset(256),
             );
-            self.glyph_cache.prepare_draw_for_glyph(
+            self.text_renderer.glyph_cache.prepare_draw_for_glyph(
                 &mut glyph_vertices,
                 &mut glyph_indices,
-                b_glyph,
-                -1.0 + self.logical_px_to_horizontal_screen_space_offset(256)
-                    + 2.0 * self.glyph_cache.get_logical_caret_h_advance(a_glyph, None),
+                (&b_uv_bounds).into(),
+                -1.0 + self.logical_px_to_horizontal_screen_space_offset(512),
+                // + 2.0 * self.glyph_cache.get_logical_caret_h_advance(a_glyph, None),
                 1.0 - self.logical_px_to_vertical_screen_space_offset(256),
             );
 
-            let mut caret_x = -1.0 + self.logical_px_to_horizontal_screen_space_offset(256);
+            /*let mut caret_x = -1.0 + self.logical_px_to_horizontal_screen_space_offset(256);
             let mut caret_y = 1.0 - self.logical_px_to_vertical_screen_space_offset(512);
 
             if let Some(txt) = &game_state.text {
@@ -457,7 +516,7 @@ impl GfxState {
                 &mut caret_y,
                 &mut glyph_vertices,
                 &mut glyph_indices,
-            );
+            );*/
 
             let old_vertices_len = glyph_vertices.len() as u16;
 
@@ -507,7 +566,7 @@ impl GfxState {
 
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_bind_group(0, &self.surface_dimensions_bind_group, &[]);
-            render_pass.set_bind_group(1, &self.glyph_cache.texture_bind_group, &[]);
+            render_pass.set_bind_group(1, &self.text_renderer.texture_bind_group, &[]);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass
                 .set_index_buffer(self.glyph_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
