@@ -5,6 +5,7 @@ mod vertex;
 use std::{sync::Arc, time::Instant};
 
 use pollster::FutureExt as _;
+use skrifa::MetadataProvider;
 use text::TextRenderer;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
@@ -27,11 +28,14 @@ pub struct GfxState {
     config: wgpu::SurfaceConfiguration,
     size: winit::dpi::PhysicalSize<u32>,
     screen_scale_factor: f32,
+    debug_line_vertex_buffer: wgpu::Buffer,
+    debug_line_render_pipeline: wgpu::RenderPipeline,
     render_pipeline: wgpu::RenderPipeline,
     //glyph_cache: GlyphCache,
     text_renderer: TextRenderer,
     cascadia_idx: usize,
     westwood_idx: usize,
+    sourceserif_idx: usize,
     vertex_buffer: wgpu::Buffer,
     glyph_index_buffer: wgpu::Buffer,
     line_vertex_buffer: wgpu::Buffer,
@@ -127,6 +131,75 @@ impl GfxState {
                 resource: surface_dimensions_buffer.as_entire_binding(),
             }],
             label: Some("surface_dimensions_bind_group"),
+        });
+
+        let debug_line_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Debug line shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("debug-line-shader.wgsl").into()),
+        });
+
+        let debug_line_render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Debug line renderer pipeline layout"),
+                bind_group_layouts: &[&surface_dimensions_bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+        let debug_line_render_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Debug line renderer pipeline"),
+                layout: Some(&debug_line_render_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &debug_line_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<[f32; 2]>() as wgpu::BufferAddress,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &[wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x2,
+                            offset: 0,
+                            shader_location: 0,
+                        }],
+                    }],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &debug_line_shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::LineList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    // Requires Features::DEPTH_CLIP_CONTROL
+                    unclipped_depth: false,
+                    // Requires Features::CONSERVATIVE_RASTERIZATION
+                    conservative: false,
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                multiview: None,
+                cache: None,
+            });
+
+        let debug_line_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("debug_line_vertex_buffer"),
+            size: (256 as usize * std::mem::size_of::<[f32; 2]>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -229,6 +302,10 @@ impl GfxState {
             .cache_font(font_path_2)
             .expect("unable to load westwood")[0];
 
+        let sourceserif_idx = text_renderer
+            .cache_font("./fonts/SourceSerifVariable-Roman.ttf")
+            .expect("unable to load sourceserif")[0];
+
         let line_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("line_vertex_buffer"),
             size: (4000 as usize * std::mem::size_of::<LineVertex>()) as wgpu::BufferAddress,
@@ -298,10 +375,13 @@ impl GfxState {
             config,
             size,
             screen_scale_factor,
+            debug_line_vertex_buffer,
+            debug_line_render_pipeline,
             render_pipeline,
             text_renderer,
             cascadia_idx,
             westwood_idx,
+            sourceserif_idx,
             vertex_buffer,
             glyph_index_buffer,
             line_vertex_buffer,
@@ -380,6 +460,56 @@ impl GfxState {
                 label: Some("Render Encoder"),
             });
 
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Debug line render pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    // The view to save the colors to. In this case, the screen.
+                    view: &view,
+                    // Target that will receive the resolved output. Is the same as `view` unless multisampling is enabled.
+                    resolve_target: None,
+                    // What to do with the colors on the view (i.e. the screen)
+                    ops: wgpu::Operations {
+                        // Load tells wgpu how to handle colors stored from the previous frame (we clear the screen)
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 10.0 / 255.0,
+                            g: 10.0 / 255.0,
+                            b: 10.0 / 255.0,
+                            a: 1.0,
+                        }),
+                        // We want to store the rendered results to the (Surface)Texture behind the TextureView (the view)
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+
+            let line_vertices: [[f32; 2]; 2] = [
+                [
+                    -1.0,
+                    1.0 - self.logical_px_to_vertical_screen_space_offset(256.0),
+                ],
+                [
+                    1.0,
+                    1.0 - self.logical_px_to_vertical_screen_space_offset(256.0),
+                ],
+            ];
+
+            self.queue.write_buffer(
+                &self.debug_line_vertex_buffer,
+                0,
+                bytemuck::cast_slice(&line_vertices),
+            );
+
+            render_pass.set_pipeline(&self.debug_line_render_pipeline);
+            render_pass.set_bind_group(0, &self.surface_dimensions_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.debug_line_vertex_buffer.slice(..));
+            render_pass.draw(0..line_vertices.len() as u32, 0..1);
+        }
+
         // begin_render_pass borrows encoder mutably, so we need to make sure that the borrow
         // is dropped before we can call encoder.finish()
         {
@@ -394,13 +524,8 @@ impl GfxState {
                         resolve_target: None,
                         // What to do with the colors on the view (i.e. the screen)
                         ops: wgpu::Operations {
-                            // Load tells wgpu how to handle colors stored from the previous frame (we clear the screen)
-                            load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 10.0 / 255.0,
-                                g: 10.0 / 255.0,
-                                b: 10.0 / 255.0,
-                                a: 1.0,
-                            }),
+                            // Load tells wgpu how to handle colors stored from the previous frame (load from previous render pass)
+                            load: wgpu::LoadOp::Load,
                             // We want to store the rendered results to the (Surface)Texture behind the TextureView (the view)
                             store: wgpu::StoreOp::Store,
                         },
@@ -412,7 +537,9 @@ impl GfxState {
                 timestamp_writes: None,
             });
 
-            let font_size = skrifa::instance::Size::new(128.0 * self.screen_scale_factor);
+            let ppem = 64.0f32 * self.screen_scale_factor;
+
+            let font_size = skrifa::instance::Size::new(ppem);
 
             self.text_renderer
                 .queue_write_texture_if_changed(&self.queue);
@@ -428,7 +555,25 @@ impl GfxState {
 
             let shaper = cascadia.shaper(super::ShaperSettings::new());
 
-            let glyphs = shaper.shape("ab", None, Some(font_size.clone()));
+            let glyphs = shaper.shape("abpAj", None, Some(font_size.clone()));
+
+            let upem = cascadia
+                .ext_font_ref()
+                .metrics(font_size.clone(), skrifa::instance::LocationRef::default())
+                .units_per_em;
+
+            let a_advance = glyphs.glyph_positions()[0].x_advance as f32 * ppem / upem as f32;
+            let b_advance = glyphs.glyph_positions()[1].x_advance as f32 * ppem / upem as f32;
+            let p_advance = glyphs.glyph_positions()[2].x_advance as f32 * ppem / upem as f32;
+            let cap_A_advance = glyphs.glyph_positions()[3].x_advance as f32 * ppem / upem as f32;
+            let j_advance = glyphs.glyph_positions()[4].x_advance as f32 * ppem / upem as f32;
+
+            /*eprintln!(
+                "x_advance: {}, upem: {}, a_advance: {}",
+                glyphs.glyph_positions()[0].x_advance,
+                upem,
+                a_advance
+            );*/
 
             let a_glyph_id = glyphs.glyph_infos()[0].glyph_id;
 
@@ -448,6 +593,33 @@ impl GfxState {
                 Default::default(),
             );
 
+            let p_glyph_id = glyphs.glyph_infos()[2].glyph_id;
+
+            let p_uv_bounds = self.text_renderer.glyph_cache.get_glyph_texture_bounds(
+                &cascadia,
+                p_glyph_id.into(),
+                font_size,
+                Default::default(),
+            );
+
+            let cap_A_glyph_id = glyphs.glyph_infos()[3].glyph_id;
+
+            let cap_A_uv_bounds = self.text_renderer.glyph_cache.get_glyph_texture_bounds(
+                &cascadia,
+                cap_A_glyph_id.into(),
+                font_size,
+                Default::default(),
+            );
+
+            let j_glyph_id = glyphs.glyph_infos()[4].glyph_id;
+
+            let j_uv_bounds = self.text_renderer.glyph_cache.get_glyph_texture_bounds(
+                &cascadia,
+                j_glyph_id.into(),
+                font_size,
+                Default::default(),
+            );
+
             /*let a_glyph = self
                 .glyph_cache
                 .try_get_cached_glyph_data(0, 'a', px_scale)
@@ -461,20 +633,95 @@ impl GfxState {
             let mut glyph_vertices: Vec<GlyphVertex> = Vec::with_capacity(4000);
             let mut glyph_indices: Vec<u16> = Vec::with_capacity(6000);
 
+            let x_height = cascadia
+                .ext_font_ref()
+                .metrics(font_size, skrifa::prelude::LocationRef::default())
+                .x_height;
+
+            let a_metrics = cascadia
+                .ext_font_ref()
+                .glyph_metrics(font_size, skrifa::prelude::LocationRef::default())
+                .bounds(a_glyph_id.into())
+                .unwrap();
+            //eprintln!("a_bounds: {:?}", a_metrics);
+            //eprintln!("a_uv_bounds: {:?}", a_uv_bounds);
+
+            let b_metrics = cascadia
+                .ext_font_ref()
+                .glyph_metrics(font_size, skrifa::prelude::LocationRef::default())
+                .bounds(b_glyph_id.into())
+                .unwrap();
+
+            let p_metrics = cascadia
+                .ext_font_ref()
+                .glyph_metrics(font_size, skrifa::prelude::LocationRef::default())
+                .bounds(p_glyph_id.into())
+                .unwrap();
+
+            let cap_A_metrics = cascadia
+                .ext_font_ref()
+                .glyph_metrics(font_size, skrifa::prelude::LocationRef::default())
+                .bounds(cap_A_glyph_id.into())
+                .unwrap();
+
+            let j_metrics = cascadia
+                .ext_font_ref()
+                .glyph_metrics(font_size, skrifa::prelude::LocationRef::default())
+                .bounds(j_glyph_id.into())
+                .unwrap();
+
+            /*eprintln!(
+                "a_box: {:?}\nb_box: {:?}\np_box: {:?}\nA_box: {:?}\nj_box: {:?}",
+                a_metrics, b_metrics, p_metrics, cap_A_metrics, j_metrics
+            );*/
+
             self.text_renderer.glyph_cache.prepare_draw_for_glyph(
                 &mut glyph_vertices,
                 &mut glyph_indices,
                 (&a_uv_bounds).into(),
-                -1.0 + self.logical_px_to_horizontal_screen_space_offset(256),
-                1.0 - self.logical_px_to_vertical_screen_space_offset(256),
+                -1.0 + self.logical_px_to_horizontal_screen_space_offset(256.0),
+                1.0 - self.logical_px_to_vertical_screen_space_offset(256.0)
+                    + self.logical_px_to_vertical_screen_space_offset(a_metrics.y_max),
             );
             self.text_renderer.glyph_cache.prepare_draw_for_glyph(
                 &mut glyph_vertices,
                 &mut glyph_indices,
                 (&b_uv_bounds).into(),
-                -1.0 + self.logical_px_to_horizontal_screen_space_offset(512),
-                // + 2.0 * self.glyph_cache.get_logical_caret_h_advance(a_glyph, None),
-                1.0 - self.logical_px_to_vertical_screen_space_offset(256),
+                -1.0 + self.logical_px_to_horizontal_screen_space_offset(256.0)
+                    + self.logical_px_to_horizontal_screen_space_offset(a_advance),
+                1.0 - self.logical_px_to_vertical_screen_space_offset(256.0)
+                    + self.logical_px_to_vertical_screen_space_offset(b_metrics.y_max),
+            );
+            self.text_renderer.glyph_cache.prepare_draw_for_glyph(
+                &mut glyph_vertices,
+                &mut glyph_indices,
+                (&p_uv_bounds).into(),
+                -1.0 + self.logical_px_to_horizontal_screen_space_offset(256.0)
+                    + self.logical_px_to_horizontal_screen_space_offset(a_advance + b_advance),
+                1.0 - self.logical_px_to_vertical_screen_space_offset(256.0)
+                    + self.logical_px_to_vertical_screen_space_offset(p_metrics.y_max),
+            );
+            self.text_renderer.glyph_cache.prepare_draw_for_glyph(
+                &mut glyph_vertices,
+                &mut glyph_indices,
+                (&cap_A_uv_bounds).into(),
+                -1.0 + self.logical_px_to_horizontal_screen_space_offset(256.0)
+                    + self.logical_px_to_horizontal_screen_space_offset(
+                        a_advance + b_advance + p_advance,
+                    ),
+                1.0 - self.logical_px_to_vertical_screen_space_offset(256.0)
+                    + self.logical_px_to_vertical_screen_space_offset(cap_A_metrics.y_max),
+            );
+            self.text_renderer.glyph_cache.prepare_draw_for_glyph(
+                &mut glyph_vertices,
+                &mut glyph_indices,
+                (&j_uv_bounds).into(),
+                -1.0 + self.logical_px_to_horizontal_screen_space_offset(256.0)
+                    + self.logical_px_to_horizontal_screen_space_offset(
+                        a_advance + b_advance + p_advance + cap_A_advance,
+                    ),
+                1.0 - self.logical_px_to_vertical_screen_space_offset(256.0)
+                    + self.logical_px_to_vertical_screen_space_offset(j_metrics.y_max),
             );
 
             /*let mut caret_x = -1.0 + self.logical_px_to_horizontal_screen_space_offset(256);
@@ -529,17 +776,17 @@ impl GfxState {
                 GlyphVertex {
                     caret_position: [0.0, -1.0, 0.0],
                     px_bounds_offset: [0.0, 0.0],
-                    tex_coords: [0.0, 1.0],
+                    tex_coords: [0.0, 2048.0],
                 },
                 GlyphVertex {
                     caret_position: [1.0, -1.0, 0.0],
                     px_bounds_offset: [0.0, 0.0],
-                    tex_coords: [1.0, 1.0],
+                    tex_coords: [512.0, 2048.0],
                 },
                 GlyphVertex {
                     caret_position: [1.0, 0.0, 0.0],
                     px_bounds_offset: [0.0, 0.0],
-                    tex_coords: [1.0, 0.0],
+                    tex_coords: [512.0, 0.0],
                 },
             ]);
 
@@ -710,11 +957,15 @@ impl GfxState {
         vertices
     }
 
-    fn logical_px_to_horizontal_screen_space_offset(&self, logical_px_offset: u32) -> f32 {
-        logical_px_offset as f32 * self.screen_scale_factor as f32 / self.size.width as f32
+    // OPENGL CORDINATES ARE CENTERED AND GO FROM -1.0 TO +1.0
+    // !!!!! THIS MEANS THAT THE LOGICAL WIDTH AND HEIGHT OF THE SCREEN IS *** 2 *** !!!!!
+    // DON'T FORGET THIS *AGAIN*
+
+    fn logical_px_to_horizontal_screen_space_offset(&self, logical_px_offset: f32) -> f32 {
+        2.0 * logical_px_offset * self.screen_scale_factor / self.size.width as f32
     }
 
-    fn logical_px_to_vertical_screen_space_offset(&self, logical_px_offset: u32) -> f32 {
-        logical_px_offset as f32 * self.screen_scale_factor as f32 / self.size.height as f32
+    fn logical_px_to_vertical_screen_space_offset(&self, logical_px_offset: f32) -> f32 {
+        2.0 * logical_px_offset * self.screen_scale_factor / self.size.height as f32
     }
 }

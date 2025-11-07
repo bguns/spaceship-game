@@ -23,8 +23,8 @@ fn vs_main(
     model: GlyphVertexInput,
 ) -> VertexOutput {
     let offset = vec3<f32>(
-        model.px_bounds_offset.x / surface_dimensions.px.x, 
-        model.px_bounds_offset.y / surface_dimensions.px.y,
+        2.0 * model.px_bounds_offset.x / surface_dimensions.px.x, 
+        2.0 * model.px_bounds_offset.y / surface_dimensions.px.y,
         0.0
     );
 
@@ -49,17 +49,18 @@ struct FragmentOutput {
 fn fs_main(
     in: VertexOutput,
 ) -> FragmentOutput {
-    //return vec4<f32>(0.8, 0.8, 0.8, textureSample(t_diffuse, s_diffuse, in.tex_coords).r);
-    /*let s = textureSample(t_diffuse, s_diffuse, in.tex_coords).rgb;
-    if (s.r < 0.1 && s.g < 0.1 && s.b < 0.1) {
-            return vec4<f32>(s, 0.0);
-    }
-    return vec4<f32>(s, 1.0);*/
+    let dimensions = textureDimensions(t_diffuse);
+
+    let x: f32 = (in.tex_coords.x) / f32(dimensions.x);
+    let y: f32 = (in.tex_coords.y) / f32(dimensions.y);
+
+    let tex_coords = vec2<f32>(x, y);
 
     var output : FragmentOutput;
-    output.color = vec4f(0.3, 0.8, 0.0, 1.0);
-    let subpixel_mask = textureSample(t_diffuse, s_diffuse, in.tex_coords);
-    //let subpixel_alpha = subpixel_mask.r + subpixel_mask.g + subpixel_mask.b;
-    output.blend = vec4f(subpixel_mask.rgb, 1.0);
+    // text color
+    output.color = vec4<f32>(0.88, 0.556, 0.07, 1.0);
+    //output.color = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+    // subpixel rgb mask
+    output.blend = textureSample(t_diffuse, s_diffuse, tex_coords);
     return output;
 }

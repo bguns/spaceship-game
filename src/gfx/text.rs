@@ -75,9 +75,9 @@ impl TextRenderer {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -321,7 +321,7 @@ impl<'a> FontRef<'a> {
         &self.font_cache.font_datas[self.cache_index].revision
     }
 
-    fn ext_font_ref(&self) -> &ExtFontRef<'static> {
+    pub fn ext_font_ref(&self) -> &ExtFontRef<'static> {
         &self
             .lazy_font_data
             .ext_font_ref(self.font_cache, self.cache_index)
@@ -1485,7 +1485,7 @@ impl<'a> FontShaper<'a> {
                     size,
                     coords.clone(),
                 )
-                .scale(4, 1);
+                .scale(4.0, 1.0);
             //eprintln!("bounds for '{}': {:?}", info.glyph_id, bounds);
             let start_pos = (bounds.min.y as usize) * row_size + (bounds.min.x as usize);
 
@@ -1560,7 +1560,7 @@ impl Rasterizer {
         coords: &skrifa::instance::Location,
         buffer: &mut [u8],
         start: usize,
-        row_size: usize,
+        _row_size: usize,
     ) -> zeno::Placement {
         self.path.clear();
         self.draw_buffer.clear();
@@ -1625,7 +1625,7 @@ pub struct GlyphCache {
     pub texture: Vec<u8>,
     texture_data_dirty: bool,
     rasterizer: Rasterizer,
-    glyph_map: HashMap<GlyphCacheKey, etagere::AllocId>,
+    glyph_map: HashMap<GlyphCacheKey, (etagere::AllocId, zeno::Placement)>,
 }
 
 impl GlyphCache {
@@ -1651,7 +1651,20 @@ impl GlyphCache {
         glyph_id: GlyphId,
         size: skrifa::instance::Size,
         coords: skrifa::instance::Location,
-    ) -> etagere::euclid::Box2D<i32, etagere::euclid::UnknownUnit> {
+    ) -> etagere::euclid::Box2D<f32, etagere::euclid::UnknownUnit> {
+        fn result_uv_bounds(
+            alloc_box: etagere::euclid::Box2D<i32, etagere::euclid::UnknownUnit>,
+            raster_placement: &zeno::Placement,
+        ) -> etagere::euclid::Box2D<f32, etagere::euclid::UnknownUnit> {
+            etagere::euclid::Box2D::from_origin_and_size(
+                alloc_box.to_f32().scale(0.25, 1.0).min,
+                etagere::euclid::Size2D::new(
+                    raster_placement.width as f32,
+                    raster_placement.height as f32,
+                ),
+            )
+        }
+
         let rounded_size = size.ppem().unwrap().floor() as u32;
 
         let key = GlyphCacheKey {
@@ -1661,8 +1674,8 @@ impl GlyphCache {
             coords,
         };
 
-        if let Some(alloc_id) = self.glyph_map.get(&key) {
-            return self.atlas.get(*alloc_id);
+        if let Some((alloc_id, placement)) = self.glyph_map.get(&key) {
+            return result_uv_bounds(self.atlas.get(*alloc_id), placement);
         }
 
         for v in &mut self.draw_texture {
@@ -1687,6 +1700,9 @@ impl GlyphCache {
             ))
             .unwrap();
 
+        eprintln!("{}: {:?}", glyph_id, placement);
+        eprintln!("{}: {:?}", glyph_id, allocation.rectangle);
+
         let start = (allocation.rectangle.min.y as usize) * self.texture_row_size
             + (allocation.rectangle.min.x) as usize;
 
@@ -1695,22 +1711,73 @@ impl GlyphCache {
 
         for row in 0..height {
             for value in 0..width {
-                self.texture[start + (row * self.texture_row_size) + value * 4] =
-                    self.draw_texture[(row * width * 4) + value * 4];
-                self.texture[start + (row * self.texture_row_size) + value * 4 + 1] =
-                    self.draw_texture[(row * width * 4) + value * 4 + 1];
-                self.texture[start + (row * self.texture_row_size) + value * 4 + 2] =
-                    self.draw_texture[(row * width * 4) + value * 4 + 2];
-                self.texture[start + (row * self.texture_row_size) + value * 4 + 3] =
-                    self.draw_texture[(row * width * 4) + value * 4 + 3];
+                let r = self.draw_texture[(row * width * 4) + value * 4];
+                let g = self.draw_texture[(row * width * 4) + value * 4 + 1];
+                let b = self.draw_texture[(row * width * 4) + value * 4 + 2];
+                let alpha = r.saturating_add(g).saturating_add(b);
+                self.texture[start + (row * self.texture_row_size) + value * 4] = r;
+                self.texture[start + (row * self.texture_row_size) + value * 4 + 1] = g;
+                self.texture[start + (row * self.texture_row_size) + value * 4 + 2] = b;
+                self.texture[start + (row * self.texture_row_size) + value * 4 + 3] = alpha;
             }
         }
 
-        self.glyph_map.insert(key, allocation.id);
+        let uv_bounds = result_uv_bounds(allocation.rectangle, &placement);
+        eprintln!("{} uv_bounds: {:?}", glyph_id, uv_bounds);
+
+        // debug draw border
+        /*for value in uv_bounds.min.x as usize * 4..=uv_bounds.max.x as usize * 4 {
+            /*self.texture[start + value * 4] = 255;
+            self.texture[start + value * 4 + 1] = 255;
+            self.texture[start + value * 4 + 2] = 255;
+            self.texture[start + value * 4 + 3] = 255;
+
+            self.texture[start + ((height - 1) * self.texture_row_size) + value * 4] = 255;
+            self.texture[start + ((height - 1) * self.texture_row_size) + value * 4 + 1] = 255;
+            self.texture[start + ((height - 1) * self.texture_row_size) + value * 4 + 2] = 255;
+            self.texture[start + ((height - 1) * self.texture_row_size) + value * 4 + 3] = 255;*/
+
+            self.texture[uv_bounds.min.y as usize * self.texture_row_size + value] = 255;
+            self.texture[(uv_bounds.max.y as usize) * self.texture_row_size + value] = 255;
+        }
+        for row in uv_bounds.min.y as usize..=uv_bounds.max.y as usize {
+            /*self.texture[start + (row * self.texture_row_size)] = 255;
+            self.texture[start + (row * self.texture_row_size) + 1] = 255;
+            self.texture[start + (row * self.texture_row_size) + 2] = 255;
+            self.texture[start + (row * self.texture_row_size) + 3] = 255;
+
+            self.texture[start + (row * self.texture_row_size) + (width - 1) * 4] = 255;
+            self.texture[start + (row * self.texture_row_size) + (width - 1) * 4 + 1] = 255;
+            self.texture[start + (row * self.texture_row_size) + (width - 1) * 4 + 2] = 255;
+            self.texture[start + (row * self.texture_row_size) + (width - 1) * 4 + 3] = 255;*/
+
+            self.texture[row * self.texture_row_size + uv_bounds.min.x as usize * 4] = 255;
+            self.texture[row * self.texture_row_size + uv_bounds.min.x as usize * 4 + 1] = 255;
+            self.texture[row * self.texture_row_size + uv_bounds.min.x as usize * 4 + 2] = 255;
+            self.texture[row * self.texture_row_size + uv_bounds.min.x as usize * 4 + 3] = 255;
+
+            self.texture[row * self.texture_row_size + uv_bounds.max.x as usize * 4] = 255;
+            self.texture[row * self.texture_row_size + uv_bounds.max.x as usize * 4 + 1] = 255;
+            self.texture[row * self.texture_row_size + uv_bounds.max.x as usize * 4 + 2] = 255;
+            self.texture[row * self.texture_row_size + uv_bounds.max.x as usize * 4 + 3] = 255;
+        }*/
+        /*if glyph_id.to_u32() == 318 {
+            image::save_buffer_with_format(
+                "tex.png",
+                &self.texture,
+                (self.texture_row_size / 4) as u32,
+                self.texture_rows as u32,
+                image::ColorType::Rgba8,
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        }*/
+
+        self.glyph_map.insert(key, (allocation.id, placement));
 
         self.texture_data_dirty = true;
 
-        allocation.rectangle
+        uv_bounds
     }
 
     pub fn prepare_draw_for_glyph(
@@ -1786,13 +1853,11 @@ impl RenderGlyphData {
     }
 }
 
-impl From<&etagere::euclid::Box2D<i32, etagere::euclid::UnknownUnit>> for RenderGlyphData {
-    fn from(value: &etagere::euclid::Box2D<i32, etagere::euclid::UnknownUnit>) -> Self {
+impl From<&etagere::euclid::Box2D<f32, etagere::euclid::UnknownUnit>> for RenderGlyphData {
+    fn from(value: &etagere::euclid::Box2D<f32, etagere::euclid::UnknownUnit>) -> Self {
         RenderGlyphData {
-            px_bounds: etagere::euclid::Box2D::from_size(
-                value.to_f32().scale(0.25, 1.0).to_i32().size(),
-            ),
-            uv_bounds: value.to_f32().scale(1.0 / 2048.0, 1.0 / 2048.0),
+            px_bounds: etagere::euclid::Box2D::from_size(value.to_i32().size()),
+            uv_bounds: *value,
         }
     }
 }
