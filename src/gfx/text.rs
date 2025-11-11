@@ -20,27 +20,63 @@ use zeno::PathBuilder;
 
 use crate::os::font_util;
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct GlyphVertex {
+    pub caret_position: [f32; 3],
+    pub px_bounds_offset: [f32; 2],
+    pub tex_coords: [f32; 2],
+}
+
+impl GlyphVertex {
+    pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
+        wgpu::VertexBufferLayout {
+            array_stride: size_of::<GlyphVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &[
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x3,
+                    offset: 0,
+                    shader_location: 0,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    shader_location: 1,
+                },
+                wgpu::VertexAttribute {
+                    format: wgpu::VertexFormat::Float32x2,
+                    offset: (size_of::<[f32; 3]>() + size_of::<[f32; 2]>()) as wgpu::BufferAddress,
+                    shader_location: 2,
+                },
+            ],
+        }
+    }
+}
+
 pub struct TextRenderer {
-    pub font_cache: FontCache,
     pub glyph_cache: GlyphCache,
     surface_width: u32,
     surface_height: u32,
-    _screen_scale_factor: f32,
+    surface_scale_factor: f32,
     texture_row_size_bytes: usize,
     texture_rows: usize,
     pub texture: wgpu::Texture,
-    pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_bind_group: wgpu::BindGroup,
+    render_pipeline: wgpu::RenderPipeline,
+    glyph_vertex_buffer: wgpu::Buffer,
+    glyph_index_buffer: wgpu::Buffer,
 }
 
 impl TextRenderer {
     pub fn new(
         device: &wgpu::Device,
+        surface_configuration: &wgpu::SurfaceConfiguration,
+        surface_dimensions_bind_group_layout: &wgpu::BindGroupLayout,
         surface_width: u32,
         surface_height: u32,
-        screen_scale_factor: f32,
+        surface_scale_factor: f32,
     ) -> Self {
-        let label = Some("glyph_cache_texture");
         // keep this simple for now, just a 2K texture
         // Note that this (probably?) needs to be aligned to wgpu::COPY_BYTES_PER_ROW_ALIGNMENT (256)
         // Using Rgba8UnormSrgb
@@ -54,7 +90,7 @@ impl TextRenderer {
             depth_or_array_layers: 1,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: label,
+            label: Some("glyph_cache_texture"),
             size,
             mip_level_count: 1,
             sample_count: 1,
@@ -113,22 +149,385 @@ impl TextRenderer {
             ],
         });
 
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Glyph Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("text_shader.wgsl").into()),
+        });
+
+        let render_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Glyph Render Pipeline Layout"),
+                bind_group_layouts: &[
+                    &surface_dimensions_bind_group_layout,
+                    &texture_bind_group_layout,
+                ],
+                push_constant_ranges: &[],
+            });
+
+        let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                // What type of vertices we want to pass to the vertex shader.
+                buffers: &[GlyphVertex::desc()],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_configuration.format,
+                    //blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    blend: Some(wgpu::BlendState {
+                        // Dual source blending
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::Src1,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrc1,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrc1Alpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
+                polygon_mode: wgpu::PolygonMode::Fill,
+                // Requires Features::DEPTH_CLIP_CONTROL
+                unclipped_depth: false,
+                // Requires Features::CONSERVATIVE_RASTERIZATION
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
+        let glyph_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("glyph_vertex_buffer"),
+            size: (4000 as usize * std::mem::size_of::<GlyphVertex>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let glyph_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("glyph_index_buffer"),
+            size: (6000 as usize * std::mem::size_of::<u16>()) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         Self {
-            font_cache: FontCache::new(),
             glyph_cache: GlyphCache::new(texture_row_size_bytes, texture_rows),
             surface_width,
             surface_height,
-            _screen_scale_factor: screen_scale_factor,
+            surface_scale_factor,
             texture_row_size_bytes,
             texture_rows,
             texture,
-            texture_bind_group_layout,
             texture_bind_group,
+            render_pipeline,
+            glyph_vertex_buffer,
+            glyph_index_buffer,
         }
     }
 
-    pub fn cache_font(&mut self, path: impl Into<PathBuf>) -> Result<SmallVec<[usize; 16]>> {
-        self.font_cache.load_font_file(path)
+    pub fn render(
+        &mut self,
+        game_state: &crate::GameState,
+        mut render_pass: wgpu::RenderPass,
+        surface_dimensions_bind_group: &wgpu::BindGroup,
+        queue: &wgpu::Queue,
+    ) {
+        let ppem = 19f32 * self.surface_scale_factor;
+
+        let font_size = skrifa::instance::Size::new(ppem);
+
+        self.queue_write_texture_if_changed(queue);
+
+        let font = &game_state.font_cache.search_fonts("cascadia code")[0];
+
+        let shaper = font.shaper(ShaperSettings::new());
+
+        let glyphs = shaper.shape("abpAj", None, Some(font_size.clone()));
+
+        let upem = font
+            .ext_font_ref()
+            .metrics(font_size.clone(), skrifa::instance::LocationRef::default())
+            .units_per_em;
+
+        let a_advance = glyphs.glyph_positions()[0].x_advance as f32 * ppem / upem as f32;
+        let b_advance = glyphs.glyph_positions()[1].x_advance as f32 * ppem / upem as f32;
+        let p_advance = glyphs.glyph_positions()[2].x_advance as f32 * ppem / upem as f32;
+        let cap_a_advance = glyphs.glyph_positions()[3].x_advance as f32 * ppem / upem as f32;
+
+        let a_glyph_id = glyphs.glyph_infos()[0].glyph_id;
+
+        let (a_placement, a_uv_bounds) = self.glyph_cache.get_glyph_texture_bounds(
+            &font,
+            a_glyph_id.into(),
+            font_size,
+            Default::default(),
+        );
+
+        let b_glyph_id = glyphs.glyph_infos()[1].glyph_id;
+
+        let (b_placement, b_uv_bounds) = self.glyph_cache.get_glyph_texture_bounds(
+            &font,
+            b_glyph_id.into(),
+            font_size,
+            Default::default(),
+        );
+
+        let p_glyph_id = glyphs.glyph_infos()[2].glyph_id;
+
+        let (p_placement, p_uv_bounds) = self.glyph_cache.get_glyph_texture_bounds(
+            &font,
+            p_glyph_id.into(),
+            font_size,
+            Default::default(),
+        );
+
+        let cap_a_glyph_id = glyphs.glyph_infos()[3].glyph_id;
+
+        let (cap_a_placement, cap_a_uv_bounds) = self.glyph_cache.get_glyph_texture_bounds(
+            &font,
+            cap_a_glyph_id.into(),
+            font_size,
+            Default::default(),
+        );
+
+        let j_glyph_id = glyphs.glyph_infos()[4].glyph_id;
+
+        let (j_placement, j_uv_bounds) = self.glyph_cache.get_glyph_texture_bounds(
+            &font,
+            j_glyph_id.into(),
+            font_size,
+            Default::default(),
+        );
+
+        let mut glyph_vertices: Vec<GlyphVertex> = Vec::with_capacity(4000);
+        let mut glyph_indices: Vec<u16> = Vec::with_capacity(6000);
+
+        self.glyph_cache.prepare_draw_for_glyph(
+            &mut glyph_vertices,
+            &mut glyph_indices,
+            (&a_uv_bounds).into(),
+            -1.0 + super::logical_px_to_screen_surface_offset(
+                256,
+                self.surface_width,
+                self.surface_scale_factor,
+            ),
+            1.0 - super::logical_px_to_screen_surface_offset(
+                256 + (a_placement.height as i16 - a_placement.top as i16),
+                self.surface_height,
+                self.surface_scale_factor,
+            ),
+        );
+        self.glyph_cache.prepare_draw_for_glyph(
+            &mut glyph_vertices,
+            &mut glyph_indices,
+            (&b_uv_bounds).into(),
+            -1.0 + super::logical_px_to_screen_surface_offset(
+                256,
+                self.surface_width,
+                self.surface_scale_factor,
+            ) + super::logical_px_to_screen_surface_offset(
+                a_advance.floor() as i16,
+                self.surface_width,
+                self.surface_scale_factor,
+            ),
+            1.0 - super::logical_px_to_screen_surface_offset(
+                256 + (b_placement.height as i16 - b_placement.top as i16),
+                self.surface_height,
+                self.surface_scale_factor,
+            ),
+        );
+        self.glyph_cache.prepare_draw_for_glyph(
+            &mut glyph_vertices,
+            &mut glyph_indices,
+            (&p_uv_bounds).into(),
+            -1.0 + super::logical_px_to_screen_surface_offset(
+                256,
+                self.surface_width,
+                self.surface_scale_factor,
+            ) + super::logical_px_to_screen_surface_offset(
+                (a_advance + b_advance).floor() as i16,
+                self.surface_width,
+                self.surface_scale_factor,
+            ),
+            1.0 - super::logical_px_to_screen_surface_offset(
+                256 + (p_placement.height as i16 - p_placement.top as i16),
+                self.surface_height,
+                self.surface_scale_factor,
+            ),
+        );
+        self.glyph_cache.prepare_draw_for_glyph(
+            &mut glyph_vertices,
+            &mut glyph_indices,
+            (&cap_a_uv_bounds).into(),
+            -1.0 + super::logical_px_to_screen_surface_offset(
+                256,
+                self.surface_width,
+                self.surface_scale_factor,
+            ) + super::logical_px_to_screen_surface_offset(
+                (a_advance + b_advance + p_advance).floor() as i16,
+                self.surface_width,
+                self.surface_scale_factor,
+            ),
+            1.0 - super::logical_px_to_screen_surface_offset(
+                256 + (cap_a_placement.height as i16 - cap_a_placement.top as i16),
+                self.surface_height,
+                self.surface_scale_factor,
+            ),
+        );
+        self.glyph_cache.prepare_draw_for_glyph(
+            &mut glyph_vertices,
+            &mut glyph_indices,
+            (&j_uv_bounds).into(),
+            -1.0 + super::logical_px_to_screen_surface_offset(
+                256,
+                self.surface_width,
+                self.surface_scale_factor,
+            ) + super::logical_px_to_screen_surface_offset(
+                (a_advance + b_advance + p_advance + cap_a_advance).floor() as i16,
+                self.surface_width,
+                self.surface_scale_factor,
+            ),
+            1.0 - super::logical_px_to_screen_surface_offset(
+                256 + (j_placement.height as i16 - j_placement.top as i16),
+                self.surface_height,
+                self.surface_scale_factor,
+            ),
+        );
+
+        /*let mut caret_x = -1.0 + self.logical_px_to_horizontal_screen_space_offset(256);
+        let mut caret_y = 1.0 - self.logical_px_to_vertical_screen_space_offset(512);
+
+        if let Some(txt) = &game_state.text {
+            self.glyph_cache.prepare_draw_for_text(
+                txt,
+                1,
+                px_scale,
+                &mut caret_x,
+                &mut caret_y,
+                &mut glyph_vertices,
+                &mut glyph_indices,
+            );
+        }
+
+        let fps = 1_000_000.0 / game_state.delta_time.as_micros() as f64;
+        let fps_text = &format!(
+            "Elapsed time: {}; Runtime: {}; dt: {:.2}, State number: {}, Frame number: {}; FPS: {:.2}",
+            game_state.start_time.elapsed().as_millis(),
+            game_state.run_time.as_millis(),
+            game_state.delta_time.as_micros() as f64 / 1_000.0,
+            game_state.state_number,
+            game_state.frame_number,
+            fps
+        );
+
+        let px_scale = self.glyph_cache.create_glyph_px_scale(32.0);
+
+        caret_x = -1.0 + self.logical_px_to_horizontal_screen_space_offset(64);
+        caret_y = 1.0 - self.logical_px_to_vertical_screen_space_offset(64);
+
+        self.glyph_cache.prepare_draw_for_text(
+            fps_text,
+            0,
+            px_scale,
+            &mut caret_x,
+            &mut caret_y,
+            &mut glyph_vertices,
+            &mut glyph_indices,
+        );*/
+
+        let old_vertices_len = glyph_vertices.len() as u16;
+
+        let scale = self.surface_height as f32 / self.texture.size().height as f32;
+
+        glyph_vertices.append(&mut vec![
+            GlyphVertex {
+                caret_position: [0.0, 0.0, 0.0],
+                px_bounds_offset: [0.0, 0.0],
+                tex_coords: [0.0, 0.0],
+            },
+            GlyphVertex {
+                caret_position: [0.0, -1.0, 0.0],
+                px_bounds_offset: [0.0, 0.0],
+                tex_coords: [0.0, 2048.0],
+            },
+            GlyphVertex {
+                caret_position: [
+                    0.0 + super::logical_px_to_screen_surface_offset(
+                        (512.0 * scale).floor() as i16,
+                        self.surface_width,
+                        self.surface_scale_factor,
+                    ),
+                    -1.0,
+                    0.0,
+                ],
+                px_bounds_offset: [0.0, 0.0],
+                tex_coords: [512.0, 2048.0],
+            },
+            GlyphVertex {
+                caret_position: [
+                    0.0 + super::logical_px_to_screen_surface_offset(
+                        (512.0 * scale).floor() as i16,
+                        self.surface_width,
+                        self.surface_scale_factor,
+                    ),
+                    0.0,
+                    0.0,
+                ],
+                px_bounds_offset: [0.0, 0.0],
+                tex_coords: [512.0, 0.0],
+            },
+        ]);
+
+        glyph_indices.append(&mut vec![
+            0 + old_vertices_len,
+            1 + old_vertices_len,
+            2 + old_vertices_len,
+            2 + old_vertices_len,
+            3 + old_vertices_len,
+            0 + old_vertices_len,
+        ]);
+
+        queue.write_buffer(
+            &self.glyph_vertex_buffer,
+            0,
+            bytemuck::cast_slice(&glyph_vertices),
+        );
+
+        queue.write_buffer(
+            &self.glyph_index_buffer,
+            0,
+            bytemuck::cast_slice(&glyph_indices),
+        );
+
+        render_pass.set_pipeline(&self.render_pipeline);
+        render_pass.set_bind_group(0, surface_dimensions_bind_group, &[]);
+        render_pass.set_bind_group(1, &self.texture_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, self.glyph_vertex_buffer.slice(..));
+        render_pass.set_index_buffer(self.glyph_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.draw_indexed(0..glyph_indices.len() as u32, 0, 0..1);
     }
 
     pub fn surface_resized(&mut self, surface_width: u32, surface_height: u32, _scale_factor: f32) {
@@ -1646,7 +2045,7 @@ impl GlyphCache {
 
     pub fn prepare_draw_for_glyph(
         &self,
-        vertices: &mut Vec<super::vertex::GlyphVertex>,
+        vertices: &mut Vec<GlyphVertex>,
         indices: &mut Vec<u16>,
         glyph: RenderGlyphData,
         caret_x: f32,
@@ -1670,32 +2069,28 @@ pub struct RenderGlyphData {
 }
 
 impl RenderGlyphData {
-    pub fn to_indexed_vertices(
-        &self,
-        caret_x: f32,
-        caret_y: f32,
-    ) -> ([super::vertex::GlyphVertex; 4], [u16; 6]) {
+    pub fn to_indexed_vertices(&self, caret_x: f32, caret_y: f32) -> ([GlyphVertex; 4], [u16; 6]) {
         let left = self.px_bounds.min.x as f32;
         let right = self.px_bounds.max.x as f32;
         let top = self.px_bounds.max.y as f32;
         let bottom = self.px_bounds.min.y as f32;
-        let vertices: [super::vertex::GlyphVertex; 4] = [
-            super::vertex::GlyphVertex {
+        let vertices: [GlyphVertex; 4] = [
+            GlyphVertex {
                 caret_position: [caret_x, caret_y, 0.0],
                 px_bounds_offset: [left, top],
                 tex_coords: [self.uv_bounds.min.x as f32, self.uv_bounds.min.y as f32],
             },
-            super::vertex::GlyphVertex {
+            GlyphVertex {
                 caret_position: [caret_x, caret_y, 0.0],
                 px_bounds_offset: [left, bottom],
                 tex_coords: [self.uv_bounds.min.x as f32, self.uv_bounds.max.y as f32],
             },
-            super::vertex::GlyphVertex {
+            GlyphVertex {
                 caret_position: [caret_x, caret_y, 0.0],
                 px_bounds_offset: [right, bottom],
                 tex_coords: [self.uv_bounds.max.x as f32, self.uv_bounds.max.y as f32],
             },
-            super::vertex::GlyphVertex {
+            GlyphVertex {
                 caret_position: [caret_x, caret_y, 0.0],
                 px_bounds_offset: [right, top],
                 tex_coords: [self.uv_bounds.max.x as f32, self.uv_bounds.min.y as f32],

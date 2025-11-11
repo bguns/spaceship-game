@@ -9,7 +9,6 @@ use anyhow::Result;
 use device_query::{DeviceState, Keycode};
 
 use cgmath::prelude::*;
-use gfx::text::ShaperSettings;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -93,6 +92,12 @@ impl App {
         font_cache
             .load_font_file("./fonts/SourceSerifVariable-Roman.ttf")
             .expect("Unable to load source serif variable font file");
+        font_cache
+            .load_font_file("./fonts/Roboto-Regular.ttf")
+            .expect("Unable to load roboto regular font file");
+        font_cache
+            .load_font_file("./fonts/westwood-studio/Westwood Studio.ttf")
+            .expect("Unable to load westwood studio font file");
         Self {
             window: None,
             gfx_state: None,

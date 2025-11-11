@@ -1,40 +1,6 @@
 use std::mem::size_of;
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct GlyphVertex {
-    pub caret_position: [f32; 3],
-    pub px_bounds_offset: [f32; 2],
-    pub tex_coords: [f32; 2],
-}
-
-impl GlyphVertex {
-    pub fn desc<'a>() -> wgpu::VertexBufferLayout<'a> {
-        wgpu::VertexBufferLayout {
-            array_stride: size_of::<GlyphVertex>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
-                    offset: 0,
-                    shader_location: 0,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                    shader_location: 1,
-                },
-                wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: (size_of::<[f32; 3]>() + size_of::<[f32; 2]>()) as wgpu::BufferAddress,
-                    shader_location: 2,
-                },
-            ],
-        }
-    }
-}
-
-#[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct LineVertex {
     pub position: [f32; 3],
