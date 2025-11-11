@@ -6,7 +6,6 @@ use std::sync::{Arc, LazyLock, OnceLock};
 use std::{collections::HashMap, path::Path};
 
 use anyhow::{Context, Result};
-use bytemuck::allocation;
 use harfrust::{Feature, GlyphBuffer, ShaperData, ShaperInstance, UnicodeBuffer, Variation};
 use parking_lot::Mutex;
 use rayon::prelude::*;
@@ -26,13 +25,10 @@ pub struct TextRenderer {
     pub glyph_cache: GlyphCache,
     surface_width: u32,
     surface_height: u32,
-    screen_scale_factor: f32,
+    _screen_scale_factor: f32,
     texture_row_size_bytes: usize,
     texture_rows: usize,
-    texture_data: Vec<u8>,
     pub texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
     pub texture_bind_group_layout: wgpu::BindGroupLayout,
     pub texture_bind_group: wgpu::BindGroup,
 }
@@ -51,8 +47,6 @@ impl TextRenderer {
         let texture_row_size_bytes =
             std::cmp::min(2048, device.limits().max_texture_dimension_2d as usize);
         let texture_rows = std::cmp::min(2048, device.limits().max_texture_dimension_2d as usize);
-
-        let texture_data: Vec<u8> = vec![0; texture_row_size_bytes * texture_rows];
 
         let size = wgpu::Extent3d {
             width: (texture_row_size_bytes / 4) as u32,
@@ -124,13 +118,10 @@ impl TextRenderer {
             glyph_cache: GlyphCache::new(texture_row_size_bytes, texture_rows),
             surface_width,
             surface_height,
-            screen_scale_factor,
+            _screen_scale_factor: screen_scale_factor,
             texture_row_size_bytes,
             texture_rows,
-            texture_data,
             texture,
-            view,
-            sampler,
             texture_bind_group_layout,
             texture_bind_group,
         }
@@ -146,7 +137,7 @@ impl TextRenderer {
     }
 
     pub fn queue_write_texture_if_changed(&mut self, queue: &wgpu::Queue) {
-        if self.texture_data_dirty() {
+        if self.glyph_cache.texture_data_dirty {
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &self.texture,
@@ -166,20 +157,8 @@ impl TextRenderer {
                     depth_or_array_layers: 1,
                 },
             );
-            self.unset_texture_data_dirty();
+            self.glyph_cache.texture_data_dirty = false;
         }
-    }
-
-    fn texture_data_dirty(&self) -> bool {
-        self.glyph_cache.texture_data_dirty
-    }
-
-    pub fn set_texture_data_dirty(&mut self) {
-        self.glyph_cache.texture_data_dirty = true;
-    }
-
-    fn unset_texture_data_dirty(&mut self) {
-        self.glyph_cache.texture_data_dirty = false;
     }
 }
 
@@ -285,7 +264,7 @@ pub struct FontRef<'a> {
 }
 
 impl<'a> FontRef<'a> {
-    pub fn full_name(&self) -> String {
+    pub fn _full_name(&self) -> String {
         format!(
             "{}{}",
             &self.font_data.family_name,
@@ -1220,6 +1199,7 @@ impl FontCache {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 enum ShaperInstanceSettings {
     Variations(Vec<Variation>),
     NamedInstance(NamedInstanceInfo),
@@ -1256,24 +1236,27 @@ impl ShaperSettings {
         }
     }
 
-    pub fn with_variations(mut self, variations: impl IntoIterator<Item: Into<Variation>>) -> Self {
+    pub fn _with_variations(
+        mut self,
+        variations: impl IntoIterator<Item: Into<Variation>>,
+    ) -> Self {
         self.instance_settings = Some(ShaperInstanceSettings::Variations(
             variations.into_iter().map(|v| v.into()).collect(),
         ));
         self
     }
 
-    pub fn with_named_instance(mut self, named_instance: NamedInstanceInfo) -> Self {
+    pub fn _with_named_instance(mut self, named_instance: NamedInstanceInfo) -> Self {
         self.instance_settings = Some(ShaperInstanceSettings::NamedInstance(named_instance));
         self
     }
 
-    pub fn with_features(mut self, features: impl IntoIterator<Item: Into<Feature>>) -> Self {
+    pub fn _with_features(mut self, features: impl IntoIterator<Item: Into<Feature>>) -> Self {
         self.shape_features = Some(features.into_iter().map(|f| f.into()).collect());
         self
     }
 
-    pub fn coords<'a>(&self, font: &'a FontRef<'a>) -> skrifa::instance::Location {
+    pub fn _coords<'a>(&self, font: &'a FontRef<'a>) -> skrifa::instance::Location {
         match &self.instance_settings {
             Some(si) => match si {
                 ShaperInstanceSettings::Variations(variations) => {
@@ -1331,7 +1314,7 @@ impl std::fmt::Display for ShaperSettings {
 pub struct FontShaper<'a> {
     font_cache_ref: &'a FontRef<'a>,
     shaper_data: &'a ShaperData,
-    shaper_settings: ShaperSettings,
+    _shaper_settings: ShaperSettings,
     shaper_instance: ShaperInstance,
     features: Vec<Feature>,
 }
@@ -1366,14 +1349,14 @@ impl<'a> FontShaper<'a> {
         Self {
             font_cache_ref,
             shaper_data,
-            shaper_settings,
+            _shaper_settings: shaper_settings,
             shaper_instance: shaper_instance,
             features,
         }
     }
 
-    pub fn with_settings(mut self, settings: ShaperSettings) -> Self {
-        if settings == self.shaper_settings {
+    pub fn _with_settings(mut self, settings: ShaperSettings) -> Self {
+        if settings == self._shaper_settings {
             return self;
         }
         let ext_font_ref = self.font_cache_ref.ext_font_ref();
@@ -1424,115 +1407,6 @@ impl<'a> FontShaper<'a> {
             .build();
         let result = shaper.shape(buffer, &self.features);
 
-        return result;
-        /*eprintln!(
-            "shaping \"{}\" in font \"{}\" with settings: {{ {} }}\n  {}",
-            line,
-            self.font_cache_ref.full_name(),
-            self.shaper_settings,
-            result.serialize(&shaper, harfrust::SerializeFlags::empty())
-        );*/
-
-        let row_size = 512usize;
-
-        let mut glyph_cache = GlyphCache::new(row_size, row_size);
-
-        //let outlines = self.font_cache_ref.outline_glyph_collection();
-
-        //let mut rasterizer = Rasterizer::new(outlines);
-
-        let ppem: usize = 32;
-
-        let size = skrifa::instance::Size::new(ppem as f32);
-        let coords = self.shaper_settings.coords(&self.font_cache_ref);
-
-        //let mut buffer = vec![0u8; row_size * row_size];
-
-        /*let mut bounds: Vec<etagere::euclid::Box2D<i32, etagere::euclid::UnknownUnit>> = result
-        .glyph_infos()
-        .into_iter()
-        .map(|info| {
-            glyph_cache.ensure_glyph_cached(
-                &self.font_cache_ref,
-                size,
-                coords.clone(),
-                (info.glyph_id).into(),
-            )
-        })
-        .collect();*/
-
-        //let mut bounds: Vec<etagere::euclid::Box2D<i32, etagere::euclid::UnknownUnit>> = Vec::new();
-
-        //glyph_cache.cache_glyph_buffer(result);
-
-        for i in 0..result.len() {
-            let info = result.glyph_infos()[i];
-            /*let bounds = glyph_cache.atlas.get(
-                *glyph_cache
-                    .glyph_map
-                    .get(&(
-                        self.font_cache_ref.clone(),
-                        info.glyph_id.into(),
-                        ppem as u32,
-                        coords.clone(),
-                    ))
-                    .unwrap(),
-            );*/
-            let bounds = glyph_cache
-                .get_glyph_texture_bounds(
-                    &self.font_cache_ref,
-                    info.glyph_id.into(),
-                    size,
-                    coords.clone(),
-                )
-                .scale(4.0, 1.0);
-            //eprintln!("bounds for '{}': {:?}", info.glyph_id, bounds);
-            let start_pos = (bounds.min.y as usize) * row_size + (bounds.min.x as usize);
-
-            let mut out_buffer = String::with_capacity(ppem * ppem);
-
-            out_buffer.push_str("|");
-            for _ in 0..2 * ppem {
-                out_buffer.push_str("-");
-            }
-            out_buffer.push_str("|\n");
-            for j in 0..ppem {
-                /*eprintln!(
-                    "glyph texture row: {:?}",
-                    &glyph_cache.texture[j * row_size..(j + 1) * row_size]
-                );*/
-                out_buffer.push_str("|");
-                for k in 0..2 * ppem {
-                    //out_buffer.push_str(&format!("{} ", start_pos + j * row_size + k / 2));
-                    let r = &glyph_cache.texture[start_pos + j * row_size + ((k / 2) * 4)];
-                    let g = &glyph_cache.texture[start_pos + j * row_size + ((k / 2) * 4 + 1)];
-                    let b = &glyph_cache.texture[start_pos + j * row_size + ((k / 2) * 4 + 2)];
-                    //let val = &glyph_cache.texture[start_pos + j * row_size + ((k / 2) * 4 + 3)];
-                    let val = r / 3 + g / 3 + b / 3;
-                    let pt = if val > 210 {
-                        "@"
-                    } else if val > 140 {
-                        "8"
-                    } else if val > 80 {
-                        "o"
-                    } else if val > 20 {
-                        "."
-                    } else {
-                        " "
-                    };
-                    out_buffer.push_str(pt);
-                }
-                out_buffer.push_str("|\n");
-            }
-            out_buffer.push_str("|");
-            for _ in 0..2 * ppem {
-                out_buffer.push_str("-")
-            }
-            out_buffer.push_str("|\n");
-
-            eprintln!("{}", out_buffer);
-        }
-
         result
     }
 }
@@ -1569,12 +1443,21 @@ impl Rasterizer {
             font.outline_glyph_collection(),
             size,
             coords,
-            skrifa::outline::HintingOptions::default(),
+            skrifa::outline::HintingOptions {
+                engine: skrifa::outline::Engine::AutoFallback,
+                target: skrifa::outline::Target::Smooth {
+                    mode: skrifa::outline::SmoothMode::Lcd,
+                    symmetric_rendering: false,
+                    preserve_linear_metrics: true,
+                },
+            },
         )
         .expect("Could not create HintingInstance");
         let draw_settings = skrifa::outline::DrawSettings::hinted(&hinting_instance, true);
+
         let glyph_outline = font.outline_glyph_collection().get(glyph_id).unwrap();
         glyph_outline.draw(draw_settings, self).unwrap();
+
         let placement = zeno::Mask::with_scratch(&self.path, &mut self.scratch)
             .origin(zeno::Origin::BottomLeft)
             .format(zeno::Format::Subpixel)
@@ -1619,7 +1502,7 @@ struct GlyphCacheKey {
 
 pub struct GlyphCache {
     texture_row_size: usize,
-    texture_rows: usize,
+    _texture_rows: usize,
     atlas: etagere::AtlasAllocator,
     draw_texture: Vec<u8>,
     pub texture: Vec<u8>,
@@ -1632,7 +1515,7 @@ impl GlyphCache {
     pub fn new(texture_row_size: usize, texture_rows: usize) -> Self {
         Self {
             texture_row_size,
-            texture_rows: texture_rows,
+            _texture_rows: texture_rows,
             atlas: etagere::AtlasAllocator::new(etagere::size2(
                 texture_row_size as i32,
                 texture_rows as i32,
@@ -1651,7 +1534,10 @@ impl GlyphCache {
         glyph_id: GlyphId,
         size: skrifa::instance::Size,
         coords: skrifa::instance::Location,
-    ) -> etagere::euclid::Box2D<f32, etagere::euclid::UnknownUnit> {
+    ) -> (
+        zeno::Placement,
+        etagere::euclid::Box2D<f32, etagere::euclid::UnknownUnit>,
+    ) {
         fn result_uv_bounds(
             alloc_box: etagere::euclid::Box2D<i32, etagere::euclid::UnknownUnit>,
             raster_placement: &zeno::Placement,
@@ -1671,11 +1557,14 @@ impl GlyphCache {
             font_cache_index: font.cache_index,
             glyph_id,
             ppem: rounded_size,
-            coords,
+            coords: coords.clone(),
         };
 
         if let Some((alloc_id, placement)) = self.glyph_map.get(&key) {
-            return result_uv_bounds(self.atlas.get(*alloc_id), placement);
+            return (
+                *placement,
+                result_uv_bounds(self.atlas.get(*alloc_id), placement),
+            );
         }
 
         for v in &mut self.draw_texture {
@@ -1700,9 +1589,6 @@ impl GlyphCache {
             ))
             .unwrap();
 
-        eprintln!("{}: {:?}", glyph_id, placement);
-        eprintln!("{}: {:?}", glyph_id, allocation.rectangle);
-
         let start = (allocation.rectangle.min.y as usize) * self.texture_row_size
             + (allocation.rectangle.min.x) as usize;
 
@@ -1723,34 +1609,13 @@ impl GlyphCache {
         }
 
         let uv_bounds = result_uv_bounds(allocation.rectangle, &placement);
-        eprintln!("{} uv_bounds: {:?}", glyph_id, uv_bounds);
 
         // debug draw border
         /*for value in uv_bounds.min.x as usize * 4..=uv_bounds.max.x as usize * 4 {
-            /*self.texture[start + value * 4] = 255;
-            self.texture[start + value * 4 + 1] = 255;
-            self.texture[start + value * 4 + 2] = 255;
-            self.texture[start + value * 4 + 3] = 255;
-
-            self.texture[start + ((height - 1) * self.texture_row_size) + value * 4] = 255;
-            self.texture[start + ((height - 1) * self.texture_row_size) + value * 4 + 1] = 255;
-            self.texture[start + ((height - 1) * self.texture_row_size) + value * 4 + 2] = 255;
-            self.texture[start + ((height - 1) * self.texture_row_size) + value * 4 + 3] = 255;*/
-
             self.texture[uv_bounds.min.y as usize * self.texture_row_size + value] = 255;
             self.texture[(uv_bounds.max.y as usize) * self.texture_row_size + value] = 255;
         }
         for row in uv_bounds.min.y as usize..=uv_bounds.max.y as usize {
-            /*self.texture[start + (row * self.texture_row_size)] = 255;
-            self.texture[start + (row * self.texture_row_size) + 1] = 255;
-            self.texture[start + (row * self.texture_row_size) + 2] = 255;
-            self.texture[start + (row * self.texture_row_size) + 3] = 255;
-
-            self.texture[start + (row * self.texture_row_size) + (width - 1) * 4] = 255;
-            self.texture[start + (row * self.texture_row_size) + (width - 1) * 4 + 1] = 255;
-            self.texture[start + (row * self.texture_row_size) + (width - 1) * 4 + 2] = 255;
-            self.texture[start + (row * self.texture_row_size) + (width - 1) * 4 + 3] = 255;*/
-
             self.texture[row * self.texture_row_size + uv_bounds.min.x as usize * 4] = 255;
             self.texture[row * self.texture_row_size + uv_bounds.min.x as usize * 4 + 1] = 255;
             self.texture[row * self.texture_row_size + uv_bounds.min.x as usize * 4 + 2] = 255;
@@ -1761,23 +1626,22 @@ impl GlyphCache {
             self.texture[row * self.texture_row_size + uv_bounds.max.x as usize * 4 + 2] = 255;
             self.texture[row * self.texture_row_size + uv_bounds.max.x as usize * 4 + 3] = 255;
         }*/
-        /*if glyph_id.to_u32() == 318 {
-            image::save_buffer_with_format(
-                "tex.png",
-                &self.texture,
-                (self.texture_row_size / 4) as u32,
-                self.texture_rows as u32,
-                image::ColorType::Rgba8,
-                image::ImageFormat::Png,
-            )
-            .unwrap();
-        }*/
+
+        /*image::save_buffer_with_format(
+            "tex.png",
+            &self.texture,
+            (self.texture_row_size / 4) as u32,
+            self.texture_rows as u32,
+            image::ColorType::Rgba8,
+            image::ImageFormat::Png,
+        )
+        .unwrap();*/
 
         self.glyph_map.insert(key, (allocation.id, placement));
 
         self.texture_data_dirty = true;
 
-        uv_bounds
+        (placement, uv_bounds)
     }
 
     pub fn prepare_draw_for_glyph(
@@ -1806,10 +1670,6 @@ pub struct RenderGlyphData {
 }
 
 impl RenderGlyphData {
-    /*pub fn _px_scale(&self) -> &GlyphPxScale {
-        &self.px_scale
-    }*/
-
     pub fn to_indexed_vertices(
         &self,
         caret_x: f32,
@@ -1817,37 +1677,31 @@ impl RenderGlyphData {
     ) -> ([super::vertex::GlyphVertex; 4], [u16; 6]) {
         let left = self.px_bounds.min.x as f32;
         let right = self.px_bounds.max.x as f32;
-        let top = -self.px_bounds.min.y as f32;
-        let bottom = -self.px_bounds.max.y as f32;
+        let top = self.px_bounds.max.y as f32;
+        let bottom = self.px_bounds.min.y as f32;
         let vertices: [super::vertex::GlyphVertex; 4] = [
             super::vertex::GlyphVertex {
                 caret_position: [caret_x, caret_y, 0.0],
                 px_bounds_offset: [left, top],
-                // tex_coords: [self.uv_bounds.left(), self.uv_bounds.top()],
                 tex_coords: [self.uv_bounds.min.x as f32, self.uv_bounds.min.y as f32],
             },
             super::vertex::GlyphVertex {
                 caret_position: [caret_x, caret_y, 0.0],
                 px_bounds_offset: [left, bottom],
-                // tex_coords: [self.uv_bounds.left(), self.uv_bounds.bottom()],
                 tex_coords: [self.uv_bounds.min.x as f32, self.uv_bounds.max.y as f32],
             },
             super::vertex::GlyphVertex {
                 caret_position: [caret_x, caret_y, 0.0],
                 px_bounds_offset: [right, bottom],
-                // tex_coords: [self.uv_bounds.right(), self.uv_bounds.bottom()],
                 tex_coords: [self.uv_bounds.max.x as f32, self.uv_bounds.max.y as f32],
             },
             super::vertex::GlyphVertex {
                 caret_position: [caret_x, caret_y, 0.0],
                 px_bounds_offset: [right, top],
-                // tex_coords: [self.uv_bounds.right(), self.uv_bounds.top()],
                 tex_coords: [self.uv_bounds.max.x as f32, self.uv_bounds.min.y as f32],
             },
         ];
         let indices: [u16; 6] = [0, 1, 2, 2, 3, 0];
-
-        //eprintln!("vertices: {:#?}", vertices);
 
         (vertices, indices)
     }

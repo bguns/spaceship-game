@@ -6,7 +6,7 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum GameError {
     #[error("[ERROR] {0}")]
-    Error(String),
+    _Error(String),
     #[error("[ERROR] Wgpu Error: {0}")]
     WgpuError(#[from] wgpu::SurfaceError), //CrosstermError(crossterm::ErrorKind),
 }

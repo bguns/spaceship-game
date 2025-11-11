@@ -18,15 +18,13 @@ log = "0.4"
 wgpu = "27.0.1"
 pollster = "0.3"
 bytemuck = { version = "1.9.1", features = ["derive"] }
-image = "0.25.8"
+#image = "0.25.8"
 cgmath = "0.18.0"
-ab_glyph = "0.2.32"
 harfrust = "0.3.2"
 skrifa = "0.37.0"
 zeno = "0.3.3"
 etagere = "0.2.15"
 typed-arena = "2.0.2"
-elsa = "1.11.2"
 parking_lot = "0.12.5"
 
 [target.'cfg(windows)'.dependencies.windows]

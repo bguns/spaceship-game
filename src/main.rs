@@ -4,16 +4,12 @@ mod input;
 #[cfg_attr(windows, path = "os/windows/mod.rs")]
 mod os;
 
-use crate::gfx::text::FontRef;
 use anyhow::Result;
 
 use device_query::{DeviceState, Keycode};
 
 use cgmath::prelude::*;
 use gfx::text::ShaperSettings;
-use harfrust::{Feature, Variation};
-use parking_lot::Mutex;
-use typed_arena::Arena;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -23,23 +19,19 @@ use winit::{
 };
 
 use std::{
-    borrow::Cow,
-    cell::{LazyCell, OnceCell, RefCell},
     f32::consts::PI,
-    str::FromStr,
-    sync::{Arc, LazyLock, OnceLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use crate::error::GameError;
 use crate::gfx::GfxState;
 use crate::gfx::text::FontCache;
-use crate::gfx::text::FontShaper;
 use crate::input::KeyboardState;
-use crate::os::font_util;
 
 const SIXTEEN_MILLIS: Duration = Duration::from_millis(16);
 
+#[allow(dead_code)]
 pub struct GameState {
     start_time: Instant,
     now: Instant,
@@ -128,7 +120,6 @@ impl App {
         } else {
             false
         }
-        //self.state_number > self.frame_number
     }
 
     fn window(&self) -> Option<&Arc<Window>> {
@@ -223,254 +214,9 @@ impl ApplicationHandler for App {
     }
 }
 
-//static FONT_DATA: StaticCell<Mutex<Arena<u8>>> = StaticCell::new();
-//static FONT_DATA: LazyLock<Mutex<Arena<u8>>> = LazyLock::new(|| Mutex::new(Arena::new()));
-//static FONT_DATA_REFS: LazyLock<Vec<Arc<&'static [u8]>>> = LazyLock::new(|| Vec::new());
-
-// static FONT_DATA: parking_lot::RwLock<Vec<Box<&'static [u8]>>> =
-// parking_lot::RwLock::new(Vec::new());
-//static FONT_REFS: Mutex<elsa::FrozenVec<WithRef<'_>>> = Mutex::new(elsa::FrozenVec::new());
-
-//static FONT_DATA: OnceLock<Vec<&'static [u8]>> = OnceLock::new();
-
-struct Cache {
-    ref_data_collection: Vec<RefDataCollection<'static>>,
-}
-
-impl Cache {
-    fn new() -> Self {
-        Self {
-            ref_data_collection: Vec::new(),
-        }
-    }
-
-    fn add_data(&mut self, data: Vec<u8>) {
-        static FONT_DATA: LazyLock<Mutex<Arena<&'static [u8]>>> =
-            LazyLock::new(|| Mutex::new(Arena::new()));
-
-        let _ = FONT_DATA.lock();
-        let raw = unsafe { &*FONT_DATA.data_ptr() };
-        let data = raw.alloc(data.leak());
-        let wr = WithRef::from_data(data).with_with_ref();
-        self.ref_data_collection
-            .push(RefDataCollection { with_reff: wr });
-    }
-
-    /*fn add(&mut self, index: usize) {
-        let bytes: &'static [u8] = &FONT_DATA.get_or_init(load_font_data)[index];
-        let reff = WithRef::from_data(&bytes);
-        let with_reff = WithRef::from_data(&bytes).with_with_ref();
-        let ref_data = RefDataCollection { with_reff };
-
-        //self.ref_data_collection.push(ref_data);
-
-        /*let ref_data: Yoke<RefDataCollection<'static>, Arc<[u8]>> =
-        Yoke::attach_to_cart(data, |rd| {
-            let with_ref = WithRef::from_data(rd);
-            let with_with_ref = with_ref.with_with_ref();
-            RefDataCollection {
-                reff: with_ref,
-                with_reff: with_with_ref,
-            }
-        });*/
-    }*/
-}
-#[derive(Clone)]
-struct WithRef<'a> {
-    data_ref: &'a [u8],
-}
-
-impl<'a> WithRef<'a> {
-    fn from_data(data: &'a [u8]) -> Self {
-        Self { data_ref: data }
-    }
-
-    fn with_with_ref(&self) -> WithWithRef<'a> {
-        WithWithRef::new(self)
-    }
-}
-
-#[derive(Clone)]
-struct WithWithRef<'a> {
-    with_ref: WithRef<'a>,
-}
-
-impl<'a> WithWithRef<'a> {
-    fn new(reff: &WithRef<'a>) -> Self {
-        Self {
-            with_ref: reff.clone(),
-        }
-    }
-}
-
-struct RefDataCollection<'a> {
-    //reff: WithRef<'a>,
-    with_reff: WithWithRef<'a>,
-}
-
-/*impl RefDataCollection {
-    fn from_data(data: Arc<[u8]>) -> Self {
-        let reff: Yoke<WithRef<'static>, Arc<[u8]>> =
-            Yoke::attach_to_cart(data.clone(), |rd| WithRef::from_data(rd));
-        let with_reff: Yoke<WithWithRef<'static>, Arc<[u8]>> =
-            Yoke::attach_to_cart(data.clone(), |rd| WithRef::from_data(rd).with_with_ref());
-        Self { reff, with_reff }
-    }
-}*/
-
-/*impl<'a> RefDataCollection<'a> {
-    fn from_data(data: Arc<[u8]>) -> Yoke<RefDataCollection<'static>, Arc<[u8]>> {
-        Yoke::attach_to_cart(data, |ref_data: &[u8]| {
-            let reff = WithRef::from_data(ref_data);
-            let with_reff = reff.with_with_ref();
-            Self {
-                data_ref: ref_data.clone(),
-                reff,
-                with_reff,
-            }
-        })
-    }
-}*/
-
-/*impl<'zf> ZeroFrom<'zf, InnerCache<'_>> for InnerCache<'zf> {
-    fn zero_from(other: &'zf InnerCache<'_>) -> Self {
-        Self { refs: other.refs }
-    }
-}*/
-
-/*impl<'zf> ZeroFrom<'zf, &'static mut Arena<u8>> for InnerCache<'zf> {
-    fn zero_from(other: &'zf &'static mut Arena<u8>) -> Self {
-        Self {
-            refs: *other.iter_mut().map(|d| WithRef { data_ref: d }).collect(),
-        }
-    }
-}*/
-
 #[allow(unreachable_code)]
 fn main() -> Result<()> {
     rayon::ThreadPoolBuilder::new().build_global()?;
-    let system_fonts = font_util::load_system_font_paths()?;
-    let mut font_cache = FontCache::new();
-
-    let timer = Instant::now();
-
-    let mut data_refs: Vec<Arc<[u8]>> = Vec::new();
-
-    //let data_cache = FONT_DATA.init(Mutex::new(Arena::new()));
-
-    //let data_ref_one: &[u8] = &*data_cache.alloc(vec![1, 2, 3, 4].into());
-    //let data_ref_two = data_cache.alloc(vec![5, 6, 7, 8].into());
-
-    //let data_ref_one = FONT_DATA.lock().unwrap().push_get(vec![1, 2, 3, 4]);
-    //let data_ref_two = FONT_DATA.lock().unwrap().push_get(vec![5, 6, 7, 8]);
-
-    let mut cache = Cache::new();
-    for i in 1..5 {
-        cache.add_data((i * 10 - 5..i * 10 + 10).collect());
-    }
-
-    //cache.add(0);
-    //cache.add(1);
-
-    // let data_ref_two = FONT_DATA.lock().unwrap().last().unwrap().clone();
-    // data_refs.push(data_ref_two);
-
-    /*let data_ref_one = FONT_DATA
-        .lock()
-        .unwrap()
-        .alloc(vec![1, 2, 3, 4].into())
-        .clone();
-    data_refs.push(data_ref_one);
-
-    let data_ref_two = FONT_DATA
-        .lock()
-        .unwrap()
-        .alloc(vec![1, 2, 3, 4].into())
-        .clone();
-    data_refs.push(data_ref_two);*/
-
-    //data_refs.push(data_ref_one);
-
-    //let data_ref_one = data_cache.alloc_extend(vec![1, 2, 3, 4]);
-
-    //FONT_REFS.push(Arc::new(data_ref_one));
-    //let data_ref_two = data_cache.alloc_extend(vec![5, 6, 7, 8]);
-
-    /*let mut result = 0;
-    for font_path in &system_fonts {
-        let _ = font_cache.load_font_file(font_path);
-        result += 1;
-    }*/
-    {
-        let result = font_cache.load_system_fonts()?;
-        eprintln!(
-            "cached {} system fonts in {} ms",
-            result,
-            timer.elapsed().as_millis()
-        );
-        //result.sort();
-    }
-
-    eprintln!(
-        "font cache data size: {} MiB",
-        font_cache.raw_data_size() as f32 / 1048576.0f32
-    );
-
-    //font_cache.list_fonts(true);
-
-    font_cache.load_font_file("./fonts/SourceSerifVariable-Roman.ttf")?;
-    font_cache.load_font_file("./fonts/westwood-studio/Westwood Studio.ttf")?;
-
-    // eprintln!("{:?}", cascadia);
-    // let source_serif_ref = font_cache.to_font_ref(&source_serif[0]);
-    /*eprintln!(
-        "{}",
-        &font_cache
-            .search_fonts("cascadia code")
-            .iter()
-            .map(|fcr| fcr.pretty_print())
-            .collect::<Vec<String>>()
-            .join("\n")
-    );*/
-    //eprintln!("{:?}", font_cache.search_fonts("times new roman"));
-    // eprintln!("{:?}", font_cache.search_fonts("cambria"));
-    // eprintln!("{:?}", font_cache.search_fonts("Yu Gothic"));
-
-    //let cascadia = &font_cache.search_fonts("cascadia code regular")[0];
-
-    let font = &font_cache.search_fonts("source serif variable regular")[0];
-    //let font = &font_cache.search_fonts("westwood studio")[0];
-    //let font = &font_cache.search_fonts("cambria regular")[0];
-
-    let shaper_settings = ShaperSettings::new().with_features([
-        Feature::from_str("+kern").unwrap(),
-        Feature::from_str("+liga").unwrap(),
-        Feature::from_str("+dlig").unwrap(),
-    ]);
-
-    let shaper = font.shaper(shaper_settings);
-    let text = "fifi=>fi";
-    //let glyph_buffer = shaper.shape(text, None, Default::default());
-
-    /*for i in 0..glyph_buffer.len() {
-        let info = glyph_buffer.glyph_infos()[i];
-        let pos = glyph_buffer.glyph_positions()[i];
-    }*/
-
-    /*let mut font_face: FontShaper = FontShaper::new(
-            source_serif_ref,
-            Some(&[Variation::from(("Weight", 400.0f32))]),
-            Some([
-                harfrust::Feature::from_str("kern").unwrap(),
-                harfrust::Feature::from_str("liga").unwrap(),
-            ]),
-        );
-    h
-        let text = "fififi";
-        let _ = font_face.shape(text, None);*/
-
-    //eprintln!("{}", source_serif_ref.pretty_print());
-    //eprintln!("{:?}", cascadia_refs);
     env_logger::init();
 
     let event_loop = EventLoop::new().unwrap();
@@ -483,7 +229,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn get_multiline(run_time: Duration, surface_size_x: f32, surface_size_y: f32) -> [[f32; 3]; 5] {
+fn _get_multiline(run_time: Duration, surface_size_x: f32, surface_size_y: f32) -> [[f32; 3]; 5] {
     let runtime_seconds: f32 = run_time.as_millis() as f32 / 1000.0;
 
     let t = runtime_seconds * 2.0;

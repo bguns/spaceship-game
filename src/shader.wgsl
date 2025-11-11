@@ -58,8 +58,7 @@ fn fs_main(
 
     var output : FragmentOutput;
     // text color
-    output.color = vec4<f32>(0.88, 0.556, 0.07, 1.0);
-    //output.color = vec4<f32>(0.0, 1.0, 0.0, 1.0);
+    output.color = vec4<f32>(0.0, 0.0, 0.0, 1.0);
     // subpixel rgb mask
     output.blend = textureSample(t_diffuse, s_diffuse, tex_coords);
     return output;

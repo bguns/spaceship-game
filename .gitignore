@@ -4,4 +4,4 @@
 *.sublime-project
 *.log
 *.DS_Store
-tex.png
+tex*.png

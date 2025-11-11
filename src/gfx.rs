@@ -1,8 +1,7 @@
-mod glyph_cache;
 pub mod text;
 mod vertex;
 
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
 use pollster::FutureExt as _;
 use skrifa::MetadataProvider;
@@ -11,7 +10,6 @@ use wgpu::util::DeviceExt;
 use winit::window::Window;
 
 use anyhow::Result;
-use glyph_cache::GlyphCache;
 use vertex::{GlyphVertex, LineVertex};
 
 #[repr(C)]
@@ -21,7 +19,7 @@ struct SurfaceDimensionsPxUniform {
 }
 
 pub struct GfxState {
-    pub window: Arc<Window>,
+    pub _window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -33,13 +31,13 @@ pub struct GfxState {
     render_pipeline: wgpu::RenderPipeline,
     //glyph_cache: GlyphCache,
     text_renderer: TextRenderer,
-    cascadia_idx: usize,
-    westwood_idx: usize,
-    sourceserif_idx: usize,
+    _cascadia_idx: usize,
+    _westwood_idx: usize,
+    _sourceserif_idx: usize,
     vertex_buffer: wgpu::Buffer,
     glyph_index_buffer: wgpu::Buffer,
-    line_vertex_buffer: wgpu::Buffer,
-    line_render_pipeline: wgpu::RenderPipeline,
+    _line_vertex_buffer: wgpu::Buffer,
+    _line_render_pipeline: wgpu::RenderPipeline,
     surface_dimensions_buffer: wgpu::Buffer,
     surface_dimensions_bind_group: wgpu::BindGroup,
 }
@@ -213,6 +211,8 @@ impl GfxState {
         let mut text_renderer =
             TextRenderer::new(&device, size.width, size.height, screen_scale_factor);
 
+        text_renderer.font_cache.load_system_fonts().unwrap();
+
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Glyph Render Pipeline Layout"),
@@ -368,7 +368,7 @@ impl GfxState {
         });
 
         GfxState {
-            window,
+            _window: window,
             surface,
             device,
             queue,
@@ -379,13 +379,13 @@ impl GfxState {
             debug_line_render_pipeline,
             render_pipeline,
             text_renderer,
-            cascadia_idx,
-            westwood_idx,
-            sourceserif_idx,
+            _cascadia_idx: cascadia_idx,
+            _westwood_idx: westwood_idx,
+            _sourceserif_idx: sourceserif_idx,
             vertex_buffer,
             glyph_index_buffer,
-            line_vertex_buffer,
-            line_render_pipeline,
+            _line_vertex_buffer: line_vertex_buffer,
+            _line_render_pipeline: line_render_pipeline,
             surface_dimensions_buffer,
             surface_dimensions_bind_group,
         }
@@ -446,7 +446,7 @@ impl GfxState {
         }
     }
 
-    pub fn render(&mut self, game_state: &super::GameState) -> Result<()> {
+    pub fn render(&mut self, _game_state: &super::GameState) -> Result<()> {
         // Get SurfaceTexture
         let output = self.surface.get_current_texture()?;
         // Create TextureView with default settings
@@ -472,9 +472,9 @@ impl GfxState {
                     ops: wgpu::Operations {
                         // Load tells wgpu how to handle colors stored from the previous frame (we clear the screen)
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 10.0 / 255.0,
-                            g: 10.0 / 255.0,
-                            b: 10.0 / 255.0,
+                            r: 242.0 / 255.0,
+                            g: 240.0 / 255.0,
+                            b: 239.0 / 255.0,
                             a: 1.0,
                         }),
                         // We want to store the rendered results to the (Surface)Texture behind the TextureView (the view)
@@ -490,19 +490,19 @@ impl GfxState {
             let line_vertices: [[f32; 2]; 2] = [
                 [
                     -1.0,
-                    1.0 - self.logical_px_to_vertical_screen_space_offset(256.0),
+                    1.0 - self.logical_px_to_vertical_screen_space_offset(257.0),
                 ],
                 [
                     1.0,
-                    1.0 - self.logical_px_to_vertical_screen_space_offset(256.0),
+                    1.0 - self.logical_px_to_vertical_screen_space_offset(257.0),
                 ],
             ];
 
-            self.queue.write_buffer(
+            /*self.queue.write_buffer(
                 &self.debug_line_vertex_buffer,
                 0,
                 bytemuck::cast_slice(&line_vertices),
-            );
+            );*/
 
             render_pass.set_pipeline(&self.debug_line_render_pipeline);
             render_pass.set_bind_group(0, &self.surface_dimensions_bind_group, &[]);
@@ -537,27 +537,24 @@ impl GfxState {
                 timestamp_writes: None,
             });
 
-            let ppem = 64.0f32 * self.screen_scale_factor;
+            let ppem = 19f32 * self.screen_scale_factor;
 
             let font_size = skrifa::instance::Size::new(ppem);
 
             self.text_renderer
                 .queue_write_texture_if_changed(&self.queue);
 
-            let cascadia = &self
+            let font = &self
                 .text_renderer
                 .font_cache
-                .get_font(self.cascadia_idx)
+                .get_font(self._cascadia_idx)
                 .expect("unable to get loaded (?) cascadia FontRef");
 
-            /*self.glyph_cache.ensure_glyph_cached(0, 'a', px_scale);
-            self.glyph_cache.ensure_glyph_cached(0, 'b', px_scale);*/
-
-            let shaper = cascadia.shaper(super::ShaperSettings::new());
+            let shaper = font.shaper(super::ShaperSettings::new());
 
             let glyphs = shaper.shape("abpAj", None, Some(font_size.clone()));
 
-            let upem = cascadia
+            let upem = font
                 .ext_font_ref()
                 .metrics(font_size.clone(), skrifa::instance::LocationRef::default())
                 .units_per_em;
@@ -565,123 +562,57 @@ impl GfxState {
             let a_advance = glyphs.glyph_positions()[0].x_advance as f32 * ppem / upem as f32;
             let b_advance = glyphs.glyph_positions()[1].x_advance as f32 * ppem / upem as f32;
             let p_advance = glyphs.glyph_positions()[2].x_advance as f32 * ppem / upem as f32;
-            let cap_A_advance = glyphs.glyph_positions()[3].x_advance as f32 * ppem / upem as f32;
-            let j_advance = glyphs.glyph_positions()[4].x_advance as f32 * ppem / upem as f32;
-
-            /*eprintln!(
-                "x_advance: {}, upem: {}, a_advance: {}",
-                glyphs.glyph_positions()[0].x_advance,
-                upem,
-                a_advance
-            );*/
+            let cap_a_advance = glyphs.glyph_positions()[3].x_advance as f32 * ppem / upem as f32;
 
             let a_glyph_id = glyphs.glyph_infos()[0].glyph_id;
 
-            let a_uv_bounds = self.text_renderer.glyph_cache.get_glyph_texture_bounds(
-                &cascadia,
-                a_glyph_id.into(),
-                font_size,
-                Default::default(),
-            );
+            let (a_placement, a_uv_bounds) = self
+                .text_renderer
+                .glyph_cache
+                .get_glyph_texture_bounds(&font, a_glyph_id.into(), font_size, Default::default());
 
             let b_glyph_id = glyphs.glyph_infos()[1].glyph_id;
 
-            let b_uv_bounds = self.text_renderer.glyph_cache.get_glyph_texture_bounds(
-                &cascadia,
-                b_glyph_id.into(),
-                font_size,
-                Default::default(),
-            );
+            let (b_placement, b_uv_bounds) = self
+                .text_renderer
+                .glyph_cache
+                .get_glyph_texture_bounds(&font, b_glyph_id.into(), font_size, Default::default());
 
             let p_glyph_id = glyphs.glyph_infos()[2].glyph_id;
 
-            let p_uv_bounds = self.text_renderer.glyph_cache.get_glyph_texture_bounds(
-                &cascadia,
-                p_glyph_id.into(),
-                font_size,
-                Default::default(),
-            );
+            let (p_placement, p_uv_bounds) = self
+                .text_renderer
+                .glyph_cache
+                .get_glyph_texture_bounds(&font, p_glyph_id.into(), font_size, Default::default());
 
-            let cap_A_glyph_id = glyphs.glyph_infos()[3].glyph_id;
+            let cap_a_glyph_id = glyphs.glyph_infos()[3].glyph_id;
 
-            let cap_A_uv_bounds = self.text_renderer.glyph_cache.get_glyph_texture_bounds(
-                &cascadia,
-                cap_A_glyph_id.into(),
-                font_size,
-                Default::default(),
-            );
+            let (cap_a_placement, cap_a_uv_bounds) =
+                self.text_renderer.glyph_cache.get_glyph_texture_bounds(
+                    &font,
+                    cap_a_glyph_id.into(),
+                    font_size,
+                    Default::default(),
+                );
 
             let j_glyph_id = glyphs.glyph_infos()[4].glyph_id;
 
-            let j_uv_bounds = self.text_renderer.glyph_cache.get_glyph_texture_bounds(
-                &cascadia,
-                j_glyph_id.into(),
-                font_size,
-                Default::default(),
-            );
-
-            /*let a_glyph = self
+            let (j_placement, j_uv_bounds) = self
+                .text_renderer
                 .glyph_cache
-                .try_get_cached_glyph_data(0, 'a', px_scale)
-                .unwrap();
-
-            let b_glyph = self
-                .glyph_cache
-                .try_get_cached_glyph_data(0, 'b', px_scale)
-                .unwrap();*/
+                .get_glyph_texture_bounds(&font, j_glyph_id.into(), font_size, Default::default());
 
             let mut glyph_vertices: Vec<GlyphVertex> = Vec::with_capacity(4000);
             let mut glyph_indices: Vec<u16> = Vec::with_capacity(6000);
-
-            let x_height = cascadia
-                .ext_font_ref()
-                .metrics(font_size, skrifa::prelude::LocationRef::default())
-                .x_height;
-
-            let a_metrics = cascadia
-                .ext_font_ref()
-                .glyph_metrics(font_size, skrifa::prelude::LocationRef::default())
-                .bounds(a_glyph_id.into())
-                .unwrap();
-            //eprintln!("a_bounds: {:?}", a_metrics);
-            //eprintln!("a_uv_bounds: {:?}", a_uv_bounds);
-
-            let b_metrics = cascadia
-                .ext_font_ref()
-                .glyph_metrics(font_size, skrifa::prelude::LocationRef::default())
-                .bounds(b_glyph_id.into())
-                .unwrap();
-
-            let p_metrics = cascadia
-                .ext_font_ref()
-                .glyph_metrics(font_size, skrifa::prelude::LocationRef::default())
-                .bounds(p_glyph_id.into())
-                .unwrap();
-
-            let cap_A_metrics = cascadia
-                .ext_font_ref()
-                .glyph_metrics(font_size, skrifa::prelude::LocationRef::default())
-                .bounds(cap_A_glyph_id.into())
-                .unwrap();
-
-            let j_metrics = cascadia
-                .ext_font_ref()
-                .glyph_metrics(font_size, skrifa::prelude::LocationRef::default())
-                .bounds(j_glyph_id.into())
-                .unwrap();
-
-            /*eprintln!(
-                "a_box: {:?}\nb_box: {:?}\np_box: {:?}\nA_box: {:?}\nj_box: {:?}",
-                a_metrics, b_metrics, p_metrics, cap_A_metrics, j_metrics
-            );*/
 
             self.text_renderer.glyph_cache.prepare_draw_for_glyph(
                 &mut glyph_vertices,
                 &mut glyph_indices,
                 (&a_uv_bounds).into(),
                 -1.0 + self.logical_px_to_horizontal_screen_space_offset(256.0),
-                1.0 - self.logical_px_to_vertical_screen_space_offset(256.0)
-                    + self.logical_px_to_vertical_screen_space_offset(a_metrics.y_max),
+                1.0 - self.logical_px_to_vertical_screen_space_offset(
+                    256.0 + (a_placement.height as f32 - a_placement.top as f32),
+                ),
             );
             self.text_renderer.glyph_cache.prepare_draw_for_glyph(
                 &mut glyph_vertices,
@@ -689,8 +620,9 @@ impl GfxState {
                 (&b_uv_bounds).into(),
                 -1.0 + self.logical_px_to_horizontal_screen_space_offset(256.0)
                     + self.logical_px_to_horizontal_screen_space_offset(a_advance),
-                1.0 - self.logical_px_to_vertical_screen_space_offset(256.0)
-                    + self.logical_px_to_vertical_screen_space_offset(b_metrics.y_max),
+                1.0 - self.logical_px_to_vertical_screen_space_offset(
+                    256.0 + (b_placement.height as f32 - b_placement.top as f32),
+                ),
             );
             self.text_renderer.glyph_cache.prepare_draw_for_glyph(
                 &mut glyph_vertices,
@@ -698,19 +630,21 @@ impl GfxState {
                 (&p_uv_bounds).into(),
                 -1.0 + self.logical_px_to_horizontal_screen_space_offset(256.0)
                     + self.logical_px_to_horizontal_screen_space_offset(a_advance + b_advance),
-                1.0 - self.logical_px_to_vertical_screen_space_offset(256.0)
-                    + self.logical_px_to_vertical_screen_space_offset(p_metrics.y_max),
+                1.0 - self.logical_px_to_vertical_screen_space_offset(
+                    256.0 + (p_placement.height as f32 - p_placement.top as f32),
+                ),
             );
             self.text_renderer.glyph_cache.prepare_draw_for_glyph(
                 &mut glyph_vertices,
                 &mut glyph_indices,
-                (&cap_A_uv_bounds).into(),
+                (&cap_a_uv_bounds).into(),
                 -1.0 + self.logical_px_to_horizontal_screen_space_offset(256.0)
                     + self.logical_px_to_horizontal_screen_space_offset(
                         a_advance + b_advance + p_advance,
                     ),
-                1.0 - self.logical_px_to_vertical_screen_space_offset(256.0)
-                    + self.logical_px_to_vertical_screen_space_offset(cap_A_metrics.y_max),
+                1.0 - self.logical_px_to_vertical_screen_space_offset(
+                    256.0 + (cap_a_placement.height as f32 - cap_a_placement.top as f32),
+                ),
             );
             self.text_renderer.glyph_cache.prepare_draw_for_glyph(
                 &mut glyph_vertices,
@@ -718,10 +652,11 @@ impl GfxState {
                 (&j_uv_bounds).into(),
                 -1.0 + self.logical_px_to_horizontal_screen_space_offset(256.0)
                     + self.logical_px_to_horizontal_screen_space_offset(
-                        a_advance + b_advance + p_advance + cap_A_advance,
+                        a_advance + b_advance + p_advance + cap_a_advance,
                     ),
-                1.0 - self.logical_px_to_vertical_screen_space_offset(256.0)
-                    + self.logical_px_to_vertical_screen_space_offset(j_metrics.y_max),
+                1.0 - self.logical_px_to_vertical_screen_space_offset(
+                    256.0 + (j_placement.height as f32 - j_placement.top as f32),
+                ),
             );
 
             /*let mut caret_x = -1.0 + self.logical_px_to_horizontal_screen_space_offset(256);
@@ -767,6 +702,8 @@ impl GfxState {
 
             let old_vertices_len = glyph_vertices.len() as u16;
 
+            let scale = self.size.height as f32 / self.text_renderer.texture.size().height as f32;
+
             glyph_vertices.append(&mut vec![
                 GlyphVertex {
                     caret_position: [0.0, 0.0, 0.0],
@@ -779,12 +716,20 @@ impl GfxState {
                     tex_coords: [0.0, 2048.0],
                 },
                 GlyphVertex {
-                    caret_position: [1.0, -1.0, 0.0],
+                    caret_position: [
+                        0.0 + self.logical_px_to_horizontal_screen_space_offset(512.0 * scale),
+                        -1.0,
+                        0.0,
+                    ],
                     px_bounds_offset: [0.0, 0.0],
                     tex_coords: [512.0, 2048.0],
                 },
                 GlyphVertex {
-                    caret_position: [1.0, 0.0, 0.0],
+                    caret_position: [
+                        0.0 + self.logical_px_to_horizontal_screen_space_offset(512.0 * scale),
+                        0.0,
+                        0.0,
+                    ],
                     px_bounds_offset: [0.0, 0.0],
                     tex_coords: [512.0, 0.0],
                 },
