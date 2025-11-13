@@ -13,8 +13,10 @@ use vertex::LineVertex;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct SurfaceDimensionsPxUniform {
-    surface_dimensions_px: [f32; 2],
+struct SurfaceDimensionsUniform {
+    width: u32,
+    height: u32,
+    scale_factor: f32,
 }
 
 pub struct GfxState {
@@ -88,8 +90,10 @@ impl GfxState {
 
         surface.configure(&device, &config);
 
-        let surface_dimensions_px_uniform = SurfaceDimensionsPxUniform {
-            surface_dimensions_px: [size.width as f32, size.height as f32],
+        let surface_dimensions_px_uniform = SurfaceDimensionsUniform {
+            width: size.width,
+            height: size.height,
+            scale_factor: screen_scale_factor,
         };
 
         let surface_dimensions_buffer =
@@ -319,8 +323,10 @@ impl GfxState {
             self.config.height = new_size_apply.height;
             self.surface.configure(&self.device, &self.config);
 
-            let surface_dimensions_px_uniform = SurfaceDimensionsPxUniform {
-                surface_dimensions_px: [new_size_apply.width as f32, new_size_apply.height as f32],
+            let surface_dimensions_px_uniform = SurfaceDimensionsUniform {
+                width: new_size_apply.width,
+                height: new_size_apply.height,
+                scale_factor: self.screen_scale_factor,
             };
             self.queue.write_buffer(
                 &self.surface_dimensions_buffer,
@@ -361,9 +367,9 @@ impl GfxState {
                     ops: wgpu::Operations {
                         // Load tells wgpu how to handle colors stored from the previous frame (we clear the screen)
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 242.0 / 255.0,
-                            g: 240.0 / 255.0,
-                            b: 239.0 / 255.0,
+                            r: 1.0, //242.0 / 255.0,
+                            g: 1.0, //240.0 / 255.0,
+                            b: 1.0, //239.0 / 255.0,
                             a: 1.0,
                         }),
                         // We want to store the rendered results to the (Surface)Texture behind the TextureView (the view)

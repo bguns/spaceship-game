@@ -23,9 +23,9 @@ use crate::os::font_util;
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GlyphVertex {
-    pub caret_position: [f32; 3],
-    pub px_bounds_offset: [f32; 2],
-    pub tex_coords: [f32; 2],
+    pub caret_position: [i32; 2],
+    pub px_bounds_offset: [i32; 2],
+    pub tex_coords: [u32; 2],
 }
 
 impl GlyphVertex {
@@ -35,18 +35,18 @@ impl GlyphVertex {
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &[
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x3,
+                    format: wgpu::VertexFormat::Sint32x2,
                     offset: 0,
                     shader_location: 0,
                 },
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: size_of::<[f32; 3]>() as wgpu::BufferAddress,
+                    format: wgpu::VertexFormat::Sint32x2,
+                    offset: size_of::<[i32; 2]>() as wgpu::BufferAddress,
                     shader_location: 1,
                 },
                 wgpu::VertexAttribute {
-                    format: wgpu::VertexFormat::Float32x2,
-                    offset: (size_of::<[f32; 3]>() + size_of::<[f32; 2]>()) as wgpu::BufferAddress,
+                    format: wgpu::VertexFormat::Uint32x2,
+                    offset: 2 * size_of::<[i32; 2]>() as wgpu::BufferAddress,
                     shader_location: 2,
                 },
             ],
@@ -255,7 +255,7 @@ impl TextRenderer {
         surface_dimensions_bind_group: &wgpu::BindGroup,
         queue: &wgpu::Queue,
     ) {
-        let ppem = 19f32 * self.surface_scale_factor;
+        let ppem = 14f32 * self.surface_scale_factor;
 
         let font_size = skrifa::instance::Size::new(ppem);
 
@@ -325,96 +325,43 @@ impl TextRenderer {
         let mut glyph_vertices: Vec<GlyphVertex> = Vec::with_capacity(4000);
         let mut glyph_indices: Vec<u16> = Vec::with_capacity(6000);
 
+        let half_s_width = self.surface_width as i32 / 2;
+        let half_s_height = self.surface_height as i32 / 2;
+
         self.glyph_cache.prepare_draw_for_glyph(
             &mut glyph_vertices,
             &mut glyph_indices,
             (&a_uv_bounds).into(),
-            -1.0 + super::logical_px_to_screen_surface_offset(
-                256,
-                self.surface_width,
-                self.surface_scale_factor,
-            ),
-            1.0 - super::logical_px_to_screen_surface_offset(
-                256 + (a_placement.height as i16 - a_placement.top as i16),
-                self.surface_height,
-                self.surface_scale_factor,
-            ),
+            -half_s_width + 256,
+            half_s_height - (256 + (a_placement.height as i32 - a_placement.top as i32)),
         );
         self.glyph_cache.prepare_draw_for_glyph(
             &mut glyph_vertices,
             &mut glyph_indices,
             (&b_uv_bounds).into(),
-            -1.0 + super::logical_px_to_screen_surface_offset(
-                256,
-                self.surface_width,
-                self.surface_scale_factor,
-            ) + super::logical_px_to_screen_surface_offset(
-                a_advance.floor() as i16,
-                self.surface_width,
-                self.surface_scale_factor,
-            ),
-            1.0 - super::logical_px_to_screen_surface_offset(
-                256 + (b_placement.height as i16 - b_placement.top as i16),
-                self.surface_height,
-                self.surface_scale_factor,
-            ),
+            -half_s_width + 256 + a_advance as i32,
+            half_s_height - (256 + (b_placement.height as i32 - b_placement.top as i32)),
         );
         self.glyph_cache.prepare_draw_for_glyph(
             &mut glyph_vertices,
             &mut glyph_indices,
             (&p_uv_bounds).into(),
-            -1.0 + super::logical_px_to_screen_surface_offset(
-                256,
-                self.surface_width,
-                self.surface_scale_factor,
-            ) + super::logical_px_to_screen_surface_offset(
-                (a_advance + b_advance).floor() as i16,
-                self.surface_width,
-                self.surface_scale_factor,
-            ),
-            1.0 - super::logical_px_to_screen_surface_offset(
-                256 + (p_placement.height as i16 - p_placement.top as i16),
-                self.surface_height,
-                self.surface_scale_factor,
-            ),
+            -half_s_width + 256 + (a_advance + b_advance) as i32,
+            half_s_height - (256 + (p_placement.height as i32 - p_placement.top as i32)),
         );
         self.glyph_cache.prepare_draw_for_glyph(
             &mut glyph_vertices,
             &mut glyph_indices,
             (&cap_a_uv_bounds).into(),
-            -1.0 + super::logical_px_to_screen_surface_offset(
-                256,
-                self.surface_width,
-                self.surface_scale_factor,
-            ) + super::logical_px_to_screen_surface_offset(
-                (a_advance + b_advance + p_advance).floor() as i16,
-                self.surface_width,
-                self.surface_scale_factor,
-            ),
-            1.0 - super::logical_px_to_screen_surface_offset(
-                256 + (cap_a_placement.height as i16 - cap_a_placement.top as i16),
-                self.surface_height,
-                self.surface_scale_factor,
-            ),
+            -half_s_width + 256 + (a_advance + b_advance + p_advance) as i32,
+            half_s_height - (256 + (cap_a_placement.height as i32 - cap_a_placement.top as i32)),
         );
         self.glyph_cache.prepare_draw_for_glyph(
             &mut glyph_vertices,
             &mut glyph_indices,
             (&j_uv_bounds).into(),
-            -1.0 + super::logical_px_to_screen_surface_offset(
-                256,
-                self.surface_width,
-                self.surface_scale_factor,
-            ) + super::logical_px_to_screen_surface_offset(
-                (a_advance + b_advance + p_advance + cap_a_advance).floor() as i16,
-                self.surface_width,
-                self.surface_scale_factor,
-            ),
-            1.0 - super::logical_px_to_screen_surface_offset(
-                256 + (j_placement.height as i16 - j_placement.top as i16),
-                self.surface_height,
-                self.surface_scale_factor,
-            ),
+            -half_s_width + 256 + (a_advance + b_advance + p_advance + cap_a_advance) as i32,
+            half_s_height - (256 + (j_placement.height as i32 - j_placement.top as i32)),
         );
 
         /*let mut caret_x = -1.0 + self.logical_px_to_horizontal_screen_space_offset(256);
@@ -460,10 +407,8 @@ impl TextRenderer {
 
         let old_vertices_len = glyph_vertices.len() as u16;
 
-        let scale = self.surface_height as f32 / self.texture.size().height as f32;
-
         glyph_vertices.append(&mut vec![
-            GlyphVertex {
+            /*GlyphVertex {
                 caret_position: [0.0, 0.0, 0.0],
                 px_bounds_offset: [0.0, 0.0],
                 tex_coords: [0.0, 0.0],
@@ -498,6 +443,26 @@ impl TextRenderer {
                 ],
                 px_bounds_offset: [0.0, 0.0],
                 tex_coords: [512.0, 0.0],
+            },*/
+            GlyphVertex {
+                caret_position: [0, 0],
+                px_bounds_offset: [0, 0],
+                tex_coords: [0, 0],
+            },
+            GlyphVertex {
+                caret_position: [0, -half_s_height],
+                px_bounds_offset: [0, 0],
+                tex_coords: [0, 2048],
+            },
+            GlyphVertex {
+                caret_position: [512 / (2048 / half_s_height), -half_s_height],
+                px_bounds_offset: [0, 0],
+                tex_coords: [512, 2048],
+            },
+            GlyphVertex {
+                caret_position: [512 / (2048 / half_s_height), 0],
+                px_bounds_offset: [0, 0],
+                tex_coords: [512, 0],
             },
         ]);
 
@@ -1935,18 +1900,15 @@ impl GlyphCache {
         coords: skrifa::instance::Location,
     ) -> (
         zeno::Placement,
-        etagere::euclid::Box2D<f32, etagere::euclid::UnknownUnit>,
+        etagere::euclid::Box2D<u32, etagere::euclid::UnknownUnit>,
     ) {
         fn result_uv_bounds(
             alloc_box: etagere::euclid::Box2D<i32, etagere::euclid::UnknownUnit>,
             raster_placement: &zeno::Placement,
-        ) -> etagere::euclid::Box2D<f32, etagere::euclid::UnknownUnit> {
+        ) -> etagere::euclid::Box2D<u32, etagere::euclid::UnknownUnit> {
             etagere::euclid::Box2D::from_origin_and_size(
-                alloc_box.to_f32().scale(0.25, 1.0).min,
-                etagere::euclid::Size2D::new(
-                    raster_placement.width as f32,
-                    raster_placement.height as f32,
-                ),
+                alloc_box.to_f32().scale(0.25, 1.0).round().to_u32().min,
+                etagere::euclid::Size2D::new(raster_placement.width, raster_placement.height),
             )
         }
 
@@ -2048,8 +2010,8 @@ impl GlyphCache {
         vertices: &mut Vec<GlyphVertex>,
         indices: &mut Vec<u16>,
         glyph: RenderGlyphData,
-        caret_x: f32,
-        caret_y: f32,
+        caret_x: i32,
+        caret_y: i32,
     ) {
         let (glyph_vertices, glyph_indices) = glyph.to_indexed_vertices(caret_x, caret_y);
         let previous_vertices_len = vertices.len() as u16;
@@ -2065,35 +2027,35 @@ impl GlyphCache {
 #[derive(Clone, Copy, Debug)]
 pub struct RenderGlyphData {
     px_bounds: etagere::euclid::Box2D<i32, etagere::euclid::UnknownUnit>,
-    uv_bounds: etagere::euclid::Box2D<f32, etagere::euclid::UnknownUnit>,
+    uv_bounds: etagere::euclid::Box2D<u32, etagere::euclid::UnknownUnit>,
 }
 
 impl RenderGlyphData {
-    pub fn to_indexed_vertices(&self, caret_x: f32, caret_y: f32) -> ([GlyphVertex; 4], [u16; 6]) {
-        let left = self.px_bounds.min.x as f32;
-        let right = self.px_bounds.max.x as f32;
-        let top = self.px_bounds.max.y as f32;
-        let bottom = self.px_bounds.min.y as f32;
+    pub fn to_indexed_vertices(&self, caret_x: i32, caret_y: i32) -> ([GlyphVertex; 4], [u16; 6]) {
+        let left = self.px_bounds.min.x;
+        let right = self.px_bounds.max.x;
+        let top = self.px_bounds.max.y;
+        let bottom = self.px_bounds.min.y;
         let vertices: [GlyphVertex; 4] = [
             GlyphVertex {
-                caret_position: [caret_x, caret_y, 0.0],
+                caret_position: [caret_x, caret_y],
                 px_bounds_offset: [left, top],
-                tex_coords: [self.uv_bounds.min.x as f32, self.uv_bounds.min.y as f32],
+                tex_coords: [self.uv_bounds.min.x, self.uv_bounds.min.y],
             },
             GlyphVertex {
-                caret_position: [caret_x, caret_y, 0.0],
+                caret_position: [caret_x, caret_y],
                 px_bounds_offset: [left, bottom],
-                tex_coords: [self.uv_bounds.min.x as f32, self.uv_bounds.max.y as f32],
+                tex_coords: [self.uv_bounds.min.x, self.uv_bounds.max.y],
             },
             GlyphVertex {
-                caret_position: [caret_x, caret_y, 0.0],
+                caret_position: [caret_x, caret_y],
                 px_bounds_offset: [right, bottom],
-                tex_coords: [self.uv_bounds.max.x as f32, self.uv_bounds.max.y as f32],
+                tex_coords: [self.uv_bounds.max.x, self.uv_bounds.max.y],
             },
             GlyphVertex {
-                caret_position: [caret_x, caret_y, 0.0],
+                caret_position: [caret_x, caret_y],
                 px_bounds_offset: [right, top],
-                tex_coords: [self.uv_bounds.max.x as f32, self.uv_bounds.min.y as f32],
+                tex_coords: [self.uv_bounds.max.x, self.uv_bounds.min.y],
             },
         ];
         let indices: [u16; 6] = [0, 1, 2, 2, 3, 0];
@@ -2102,8 +2064,8 @@ impl RenderGlyphData {
     }
 }
 
-impl From<&etagere::euclid::Box2D<f32, etagere::euclid::UnknownUnit>> for RenderGlyphData {
-    fn from(value: &etagere::euclid::Box2D<f32, etagere::euclid::UnknownUnit>) -> Self {
+impl From<&etagere::euclid::Box2D<u32, etagere::euclid::UnknownUnit>> for RenderGlyphData {
+    fn from(value: &etagere::euclid::Box2D<u32, etagere::euclid::UnknownUnit>) -> Self {
         RenderGlyphData {
             px_bounds: etagere::euclid::Box2D::from_size(value.to_i32().size()),
             uv_bounds: *value,

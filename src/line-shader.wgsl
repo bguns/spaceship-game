@@ -1,6 +1,8 @@
 // Vertex shader
 struct SurfaceDimensionsUniform {
-    px: vec2<f32>
+    width: u32,
+    height: u32,
+    scale_factor: f32,
 }
 
 @group(0) @binding(0)
@@ -31,8 +33,8 @@ fn vs_main(
 
     // see https://blog.scottlogic.com/2019/11/18/drawing-lines-with-webgl.html
 
-    let prev_this = normalize(normalize(model.position.xy - prev.xy) * surface_dimensions.px);
-    let this_next = normalize(normalize(next.xy - model.position.xy) * surface_dimensions.px);
+    let prev_this = normalize(normalize(model.position.xy - prev.xy) * vec2<f32>(f32(surface_dimensions.width), f32(surface_dimensions.height)));
+    let this_next = normalize(normalize(next.xy - model.position.xy) * vec2<f32>(f32(surface_dimensions.width), f32(surface_dimensions.height)));
 
     let tangent = normalize(prev_this + this_next);
 
@@ -41,7 +43,7 @@ fn vs_main(
 
     let miter_length = 1.0 / dot(miter, normalA);
 
-    let out_pos = model.position.xy + (model.miter_dir * miter * model.thickness * miter_length) / surface_dimensions.px;
+    let out_pos = model.position.xy + (model.miter_dir * miter * model.thickness * miter_length) / vec2<f32>(f32(surface_dimensions.width), f32(surface_dimensions.height));
 
     var out: LineVertexOutput;
     out.clip_position = vec4<f32>(out_pos, 0.0, 1.0);
